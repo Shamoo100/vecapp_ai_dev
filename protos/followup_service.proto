@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package vecapp;
+
+service FollowupService {
+  rpc GetFollowupData (FollowupDataRequest) returns (FollowupDataResponse);
+}
+
+message FollowupDataRequest {
+  string tenant_id = 1;
+  string start_date = 2;
+  string end_date = 3;
+  bool include_archived = 4;
+}
+
+message FollowupDataResponse {
+  repeated Visitor visitors = 1;
+  repeated FollowupTask followup_tasks = 2;
+  repeated Note notes = 3;
+}
+
+message Visitor {
+  string id = 1;
+  string first_name = 2;
+  string last_name = 3;
+  string email = 4;
+  string phone = 5;
+  string family_id = 6;
+  int32 family_size = 7;
+  string created_at = 8;
+}
+
+message FollowupTask {
+  string id = 1;
+  string visitor_id = 2;
+  string assigned_to = 3;
+  string status = 4;
+  string created_at = 5;
+  string completed_at = 6;
+  FeedbackFormData feedback_form_data = 7;
+}
+
+message FeedbackFormData {
+  bool was_contacted = 1;
+  bool responded_to_calls = 2;
+  string decision = 3;
+  string decision_reason = 4;
+  repeated string next_steps = 5;
+}
+
+message Note {
+  string id = 1;
+  string task_id = 2;
+  string note_type = 3;
+  string content = 4;
+  string created_at = 5;
+  NoteMetadata metadata = 6;
+}
+
+message NoteMetadata {
+  repeated string interests = 1;
+  repeated string concerns = 2;
+  repeated string needs = 3;
+  repeated string requests = 4;
+} 

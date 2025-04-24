@@ -1,0 +1,130 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vecapp-ai
+  labels:
+    app: vecapp-ai
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vecapp-ai
+  template:
+    metadata:
+      labels:
+        app: vecapp-ai
+    spec:
+      containers:
+      - name: vecapp-ai
+        image: ${ECR_REPOSITORY_URI}:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        resources:
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+        env:
+        - name: APP_ENV
+          value: "production"
+        - name: DEBUG
+          value: "false"
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-secrets
+              key: jwt-secret-key
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-db-credentials
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-db-credentials
+              key: password
+        - name: POSTGRES_HOST
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-db-credentials
+              key: host
+        - name: POSTGRES_PORT
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-db-credentials
+              key: port
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-db-credentials
+              key: database
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-redis-credentials
+              key: host
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-redis-credentials
+              key: port
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-redis-credentials
+              key: password
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-aws-credentials
+              key: region
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-aws-credentials
+              key: access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-aws-credentials
+              key: secret-access-key
+        - name: S3_BUCKET_NAME
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-aws-credentials
+              key: s3-bucket-name
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-api-keys
+              key: openai-api-key
+        - name: LANGCHAIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-api-keys
+              key: langchain-api-key
+        - name: LANGSMITH_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: vecapp-ai-api-keys
+              key: langsmith-api-key
+        - name: FOLLOWUP_SERVICE_URL
+          value: "http://followup-service:8000"
+        - name: ANALYTICS_SERVICE_URL
+          value: "http://analytics-service:8000"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 15 
