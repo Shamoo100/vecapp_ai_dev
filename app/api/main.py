@@ -6,12 +6,25 @@ from core.database import Database
 from models.tenant import Tenant
 from models.visitor import Visitor
 from app.api.followup_summary_report import router as report_router
+from app.api.api import router as api_router
+from app.api.analytics import router as analytics_router
 
-router = APIRouter()
-# CORS middleware
+# Initialize FastAPI app
+app = FastAPI(title="VecApp AI", version="1.0.0")
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Include routers
-router.include_router(report_router)
+app.include_router(report_router)
+app.include_router(api_router)
+app.include_router(analytics_router)
 
 @router.post("/api/v1/visitors")
 async def create_visitor(
@@ -76,4 +89,4 @@ async def create_volunteer_assignment(
             "assignment_id": result['assignment_id']
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,10 +1,10 @@
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.main import app as api_app
-from app.api.followup_summary_report import router as health_router
+from app.api.api import router as api_router
 from app.security.auth import verify_token
 from app.config.settings import Settings
 from app.security.tenant_context import TenantContextMiddleware
+from app.core.database import Database
 import logging
 
 # Configure logging
@@ -33,14 +33,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API routers
-app.include_router(api_app.router)
+# Include API router
+app.include_router(api_router)
 
 # Add tenant context middleware
 app.add_middleware(TenantContextMiddleware)
-
-# Include routers
-app.include_router(health_router, prefix="/health", tags=["Health"])
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -58,4 +55,4 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up resources on shutdown"""
-    logger.info("Shutting down VecApp AI Service") 
+    logger.info("Shutting down VecApp AI Service")

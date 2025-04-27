@@ -17,8 +17,6 @@ from langchain.output_parsers import PydanticOutputParser
 from langchain_core.messages import SystemMessage, HumanMessage
 import langsmith
 from langchain.smith import RunEvaluator
-import langflow
-from langflow import Graph
 
 from app.data.data_fetcher import DataFetcher
 from app.data.report_repository import ReportRepository
@@ -363,4 +361,4 @@ class ReportGenerator:
         ])
         
         chain = LLMChain(llm=self.llm, prompt=prompt)
-        return chain 
+        return chain

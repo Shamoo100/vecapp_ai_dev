@@ -1,8 +1,8 @@
 from fastapi import Depends, HTTPException, Security
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from typing import Optional, Dict, List, Any
-from models.tenant import Tenant
-from core.database import Database
+from app.models.tenant import Tenant
+from app.core.database import Database
 import logging
 
 logger = logging.getLogger(__name__)
@@ -139,4 +139,4 @@ async def authenticate_user(token: str = Depends(oauth2_scheme)) -> User:
     # Set the current user in the global context
     set_current_user(user)
     
-    return user 
+    return user
