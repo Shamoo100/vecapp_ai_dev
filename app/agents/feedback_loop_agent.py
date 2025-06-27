@@ -2,18 +2,18 @@ from typing import Dict, Any, List
 from datetime import datetime, timedelta
 from .base_agent import BaseAgent
 from core.messaging import MessageQueue
-from core.database import Database
+from app.database.connection import Database
 from models.metrics import EngagementMetrics
 
 class FeedbackLoopAgent(BaseAgent):
     def __init__(
         self,
         agent_id: str,
-        tenant_id: str,
+        schema: str,
         message_queue: MessageQueue,
         database: Database
     ):
-        super().__init__(agent_id, tenant_id)
+        super().__init__(agent_id, schema)
         self.message_queue = message_queue
         self.database = database
 
@@ -21,7 +21,7 @@ class FeedbackLoopAgent(BaseAgent):
         """Process engagement data and refine strategies"""
         try:
             # Aggregate metrics
-            metrics = await self._aggregate_metrics(self.tenant_id)
+            metrics = await self._aggregate_metrics(self.schema)
             
             # Analyze trends
             trends = await self._analyze_trends(metrics)
@@ -33,7 +33,7 @@ class FeedbackLoopAgent(BaseAgent):
             updated_strategies = await self._update_strategies(insights)
             
             processed_data = {
-                'tenant_id': self.tenant_id,
+                'schema': self.schema,
                 'metrics': metrics,
                 'trends': trends,
                 'insights': insights,
@@ -42,7 +42,7 @@ class FeedbackLoopAgent(BaseAgent):
             }
 
             # Store results
-            await self.database.store_insights(processed_data)
+            await self.database.store_insights(processed_data, self.schema)
             
             # Notify stakeholders
             await self._notify_stakeholders(processed_data)
@@ -115,4 +115,4 @@ class FeedbackLoopAgent(BaseAgent):
     async def _notify_stakeholders(self, data: Dict[str, Any]):
         """Notify church leadership of insights"""
         # Implementation for stakeholder notifications
-        pass 
+        pass

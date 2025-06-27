@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional
 from datetime import datetime
 from pydantic import BaseModel
-from core.database import Database
+from app.database.connection import Database
 
 class TenantManager:
     def __init__(self, database: Database):
@@ -40,23 +40,37 @@ class TenantManager:
         """Update tenant configuration"""
         return await self.database.update_tenant_config(tenant_id, config)
 
+    # Add this method to the TenantManager class
+    
     async def _create_tenant_schema(self, tenant: Tenant):
-        """Create isolated database schema for tenant"""
-        schema_name = f"tenant_{tenant.id}"
-        await self.database.execute_query(f"""
-            CREATE SCHEMA IF NOT EXISTS {schema_name};
-            
-            -- Create tenant-specific tables
-            CREATE TABLE {schema_name}.visitors (
-                -- visitor table schema
-            );
-            
-            CREATE TABLE {schema_name}.volunteers (
-                -- volunteer table schema
-            );
-            
-            -- Add more tenant-specific tables
-        """)
+        """Create isolated database schema for tenant
+        
+        This creates a dedicated schema for the tenant and initializes all required tables
+        within that schema using Alembic migrations, ensuring proper data isolation between tenants.
+        """
+        from app.database.tenant_context import TenantContext
+        import subprocess
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        # Create the tenant schema
+        schema_name = TenantContext.get_schema_name(tenant.id)
+        
+        # First create the schema
+        await TenantContext.create_tenant_schema(tenant.id)
+        
+        # Then apply all migrations to the schema
+        logger.info(f"Applying migrations to new tenant schema: {schema_name}")
+        try:
+            cmd = ["alembic", "-x", f"tenant={schema_name}", "upgrade", "head"]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            logger.info(f"Successfully applied migrations to schema {schema_name}")
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to apply migrations to schema {schema_name}: {e}")
+            logger.error(f"Error output: {e.stderr}")
+            return False
 
     async def _initialize_tenant_config(
         self,
@@ -83,4 +97,4 @@ class TenantManager:
         
         # Merge with tenant-provided config
         config = {**default_config, **tenant_data.get('config', {})}
-        await self.database.store_tenant_config(tenant_id, config) 
+        await self.database.store_tenant_config(tenant_id, config)

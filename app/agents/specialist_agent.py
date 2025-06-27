@@ -8,11 +8,11 @@ class SpecialistAgent(BaseAgent):
     def __init__(
         self,
         agent_id: str,
-        tenant_id: str,
+        schema: str,
         message_queue: MessageQueue,
         model_path: str
     ):
-        super().__init__(agent_id, tenant_id)
+        super().__init__(agent_id, schema)
         self.message_queue = message_queue
         self.model = self._load_classification_model(model_path)
         
@@ -30,7 +30,7 @@ class SpecialistAgent(BaseAgent):
             
             processed_data = {
                 'visitor_id': data['visitor_id'],
-                'tenant_id': self.tenant_id,
+                'schema': self.schema,
                 'profile_classifications': profile_scores,
                 'engagement_suggestions': suggestions
             }
@@ -64,4 +64,4 @@ class SpecialistAgent(BaseAgent):
         return {
             category: float(score)
             for category, score in zip(categories, predictions[0])
-        } 
+        }

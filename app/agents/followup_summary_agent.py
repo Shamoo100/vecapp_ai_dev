@@ -13,24 +13,23 @@ class FollowupSummaryAgent(BaseAgent):
     Generates comprehensive reports based on visitor data from the Church Management System.
     """
     
-    def __init__(self):
-        super().__init__("followup_summary_agent")
+    def __init__(self, agent_id: str, schema: str):
+        super().__init__(agent_id, schema)
     
-    async def generate_followup_summary(self, date_range: Dict[str, datetime], tenant_id: str) -> Dict[str, Any]:
+    async def generate_followup_summary(self, date_range: Dict[str, datetime]) -> Dict[str, Any]:
         """
         Generate a comprehensive follow-up summary report based on the specified date range.
         
         Args:
             date_range: Dictionary containing 'start_date' and 'end_date' as datetime objects
-            tenant_id: The ID of the tenant (church) requesting the report
             
         Returns:
             Dictionary containing the report data and metadata
         """
-        logger.info(f"Generating follow-up summary for tenant {tenant_id} from {date_range['start_date']} to {date_range['end_date']}")
+        logger.info(f"Generating follow-up summary for schema {self.schema} from {date_range['start_date']} to {date_range['end_date']}")
         
         # 1. Retrieve visitor data from CHMS
-        visitor_data = await self._fetch_visitor_data(tenant_id, date_range)
+        visitor_data = await self._fetch_visitor_data(date_range)
         
         # 2. Analyze follow-up tasks and notes
         followup_analysis = await self._analyze_followup_tasks(visitor_data)
@@ -42,7 +41,7 @@ class FollowupSummaryAgent(BaseAgent):
         # 4. Generate report sections
         report = {
             "metadata": {
-                "tenant_id": tenant_id,
+                "schema": self.schema,
                 "date_range": date_range,
                 "generated_at": datetime.now(),
                 "generated_by": get_current_user().id if get_current_user() else "system"
@@ -55,7 +54,7 @@ class FollowupSummaryAgent(BaseAgent):
         }
         
         # 5. Store the report for future access
-        report_id = await self._store_report(report, tenant_id)
+        report_id = await self._store_report(report)
         report["report_id"] = report_id
         
         # Example of integrating follow-up note creation
@@ -169,4 +168,4 @@ class FollowupSummaryAgent(BaseAgent):
             "AI-Generated": True
         }
 
-        return followup_note 
+        return followup_note

@@ -1,19 +1,20 @@
 from typing import Dict, Any, List
 from datetime import datetime
-from .base_agent import BaseAgent
-from core.messaging import MessageQueue
-from models.feedback import Feedback
-from core.database import Database
+from app.base_agent import BaseAgent
+from app.core.messaging import MessageQueue
+from app.models.feedback import Feedback
+from app.core.database import Database
 
 class EvaluationAgent(BaseAgent):
+    """Agent responsible for evaluating follow-up outcomes and feedback"""
     def __init__(
         self,
         agent_id: str,
-        tenant_id: str,
+        schema: str,
         message_queue: MessageQueue,
         database: Database
     ):
-        super().__init__(agent_id, tenant_id)
+        super().__init__(agent_id, schema)
         self.message_queue = message_queue
         self.database = database
 
@@ -35,7 +36,7 @@ class EvaluationAgent(BaseAgent):
             
             processed_data = {
                 'visitor_id': data['visitor_id'],
-                'tenant_id': self.tenant_id,
+                'schema': self.schema,
                 'interaction_data': interaction_data,
                 'feedback_data': feedback_data if 'feedback' in data else None,
                 'timestamp': datetime.utcnow().isoformat()
@@ -119,4 +120,4 @@ class EvaluationAgent(BaseAgent):
     ) -> List[str]:
         """Update visitor interests based on feedback"""
         # Implementation for interests update
-        pass 
+        pass

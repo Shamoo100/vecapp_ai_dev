@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from datetime import datetime
 
-from app.core.auth import get_current_tenant, verify_api_key
+from app.core.api_key_auth import get_current_tenant, verify_api_key
 from app.core.database import Database
 from app.models.tenant import Tenant
 from app.agents.data_collection_agent import DataCollectionAgent

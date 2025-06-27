@@ -2,21 +2,18 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional
 from uuid import UUID
 import json
-import asyncpg
-from app.config.settings import get_settings
 from app.models.report import ReportStatus
+from app.data.base_repository import BaseRepository
+from app.database.connection_manager import ConnectionManager
 
-settings = get_settings()
 
-class ReportRepository:
+
+class ReportRepository(BaseRepository):
     """Repository for report data operations"""
     
-    async def _get_connection(self, tenant_id: UUID = None):
-        """Get a database connection with tenant schema set if provided"""
-        conn = await asyncpg.connect(settings.DATABASE_URL)
-        if tenant_id:
-            await conn.execute(f"SET search_path TO tenant_{tenant_id}, public")
-        return conn
+    def __init__(self):
+        """Initialize the report repository."""
+        super().__init__(table_name="generated_reports")
     
     async def create_report(
         self,
@@ -29,25 +26,19 @@ class ReportRepository:
         status: ReportStatus = ReportStatus.PENDING
     ) -> Dict[str, Any]:
         """Create a new report record"""
-        conn = await self._get_connection(tenant_id)
-        try:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO generated_reports (
-                    id, tenant_id, report_type, status,
-                    date_range_start, date_range_end,
-                    requested_by_user_id, requested_at
-                )
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                RETURNING *
-                """,
-                id, tenant_id, report_type, status.value,
-                date_range_start, date_range_end,
-                requested_by_user_id, datetime.utcnow()
-            )
-            return dict(row)
-        finally:
-            await conn.close()
+        data = {
+            "id": id,
+            "tenant_id": tenant_id,
+            "report_type": report_type,
+            "status": status.value,
+            "date_range_start": date_range_start,
+            "date_range_end": date_range_end,
+            "requested_by_user_id": requested_by_user_id,
+            "requested_at": datetime.utcnow()
+        }
+        
+        await self.create(data, str(tenant_id))
+        return await self.get_by_id(str(id), str(tenant_id))
     
     async def update_report(
         self,
@@ -59,8 +50,7 @@ class ReportRepository:
         error_message: Optional[str] = None
     ) -> Dict[str, Any]:
         """Update an existing report record"""
-        conn = await self._get_connection(tenant_id)
-        try:
+        async with ConnectionManager.get_connection(tenant_id) as conn:
             # Build update query dynamically based on provided fields
             update_parts = []
             params = [report_id, tenant_id]
@@ -111,13 +101,10 @@ class ReportRepository:
                 row = await conn.fetchrow(query, *params)
                 return dict(row)
             return None
-        finally:
-            await conn.close()
     
     async def get_report(self, report_id: UUID, tenant_id: UUID) -> Optional[Dict[str, Any]]:
         """Get a report by ID"""
-        conn = await self._get_connection(tenant_id)
-        try:
+        async with ConnectionManager.get_connection(tenant_id) as conn:
             row = await conn.fetchrow(
                 """
                 SELECT * FROM generated_reports
@@ -128,8 +115,6 @@ class ReportRepository:
             if row:
                 return dict(row)
             return None
-        finally:
-            await conn.close()
     
     async def list_reports(
         self,
@@ -139,8 +124,7 @@ class ReportRepository:
         status: Optional[ReportStatus] = None
     ) -> List[Dict[str, Any]]:
         """List reports with optional filtering"""
-        conn = await self._get_connection(tenant_id)
-        try:
+        async with ConnectionManager.get_connection(tenant_id) as conn:
             # Build query with optional filters
             query = "SELECT * FROM generated_reports WHERE tenant_id = $1"
             params = [tenant_id]
@@ -166,5 +150,3 @@ class ReportRepository:
             # Execute query
             rows = await conn.fetch(query, *params)
             return [dict(row) for row in rows]
-        finally:
-            await conn.close() 

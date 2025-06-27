@@ -1,11 +1,11 @@
 from typing import Dict, Any
-from .base_agent import BaseAgent
-from core.database import Database
-from models.visitor import Visitor
+from app.agents.base_agent import BaseAgent
+from app.database.connection import Database
+from app.models.visitor import Visitor
 
 class DataCollectionAgent(BaseAgent):
-    def __init__(self, agent_id: str, tenant_id: str, database: Database):
-        super().__init__(agent_id, tenant_id)
+    def __init__(self, agent_id: str, schema: str, database: Database):
+        super().__init__(agent_id, schema)
         self.database = database
 
     async def process(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -16,7 +16,7 @@ class DataCollectionAgent(BaseAgent):
             
             # Create visitor object
             visitor = Visitor(
-                tenant_id=self.tenant_id,
+                schema=self.schema,
                 first_name=data['first_name'],
                 last_name=data['last_name'],
                 email=data['email'],
@@ -25,13 +25,13 @@ class DataCollectionAgent(BaseAgent):
             )
 
             # Store in database
-            visitor_id = await self.database.store_visitor(visitor)
+            visitor_id = await self.database.store_visitor(visitor, self.schema)
             
             # Prepare data for Generative Agent
             processed_data = {
                 'visitor_id': visitor_id,
                 'visitor_data': visitor.to_dict(),
-                'tenant_id': self.tenant_id
+                'schema': self.schema
             }
 
             self.log_activity(f"Processed visitor data for {visitor.email}")
@@ -49,4 +49,4 @@ class DataCollectionAgent(BaseAgent):
         if missing_fields:
             raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
         
-        return True 
+        return True

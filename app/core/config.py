@@ -1,37 +1,9 @@
-from pydantic import BaseSettings
-from typing import List, Optional
+"""
+Application settings module.
 
-class Settings(BaseSettings):
-    # Database
-    DATABASE_URL: str
-    
-    # Kafka
-    KAFKA_SERVERS: List[str]
-    
-    # OpenAI
-    OPENAI_API_KEY: str
-    
-    # Tenant
-    DEFAULT_TENANT_SCHEMA: str = "public"
-    
-    # Security
-    SECRET_KEY: str
-    API_KEY_HEADER: str = "X-API-Key"
-    
-    # Monitoring
-    PROMETHEUS_PORT: int = 9090
-    GRAFANA_PORT: int = 3000
-    
-    # Email
-    SMTP_HOST: str
-    SMTP_PORT: int
-    SMTP_USER: str
-    SMTP_PASSWORD: str
-    
-    # Redis
-    REDIS_URL: str
-    
-    class Config:
-        env_file = ".env"
+This module re-exports the settings from app.config.settings to maintain
+backward compatibility with existing imports.
+"""
+from app.config.settings import Settings, get_settings, settings
 
-settings = Settings() 
+__all__ = ["Settings", "get_settings", "settings"]

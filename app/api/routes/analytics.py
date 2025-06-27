@@ -1,14 +1,13 @@
 """API routes for analytics and reporting."""
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
-from datetime import datetime
-
-from app.core.auth import get_current_tenant
+from datetime import datetime, timedelta
+from app.core.api_key_auth import get_current_tenant
 from app.core.analytics import AnalyticsService
 from app.models.tenant import Tenant
 from app.api.schemas import DashboardMetrics, VisitorTrends, VolunteerPerformance
 
-router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
+router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 @router.get("/dashboard", response_model=DashboardMetrics)
 async def get_dashboard_metrics(

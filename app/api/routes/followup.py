@@ -3,19 +3,19 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from typing import Dict
 from datetime import datetime
 
-from app.core.auth import get_current_tenant
+from app.core.api_key_auth import get_current_tenant
 from app.models.tenant import Tenant
 from app.models import Visitor, FollowUpTask
 from app.agents.followup_summary_agent import FollowupSummaryAgent
 from app.data.sqs_client import SQSClient
 from app.api.schemas import FollowupNoteCreate, FollowupNoteResponse
 
-router = APIRouter(prefix="/api/v1/followup-notes", tags=["followup"])
+router = APIRouter(prefix="/followup", tags=["followup"])
 
 # Initialize SQS client
 sqs_client = SQSClient()
 
-@router.post("/generate", response_model=Dict[str, str])
+@router.post("/notes/generate", response_model=Dict[str, str])
 async def generate_followup_note(
     background_tasks: BackgroundTasks,
     tenant: Tenant = Depends(get_current_tenant)
@@ -69,7 +69,7 @@ async def generate_followup_note(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{note_id}", response_model=FollowupNoteResponse)
+@router.get("/notes/{note_id}", response_model=FollowupNoteResponse)
 async def get_followup_note(
     note_id: str,
     tenant: Tenant = Depends(get_current_tenant)

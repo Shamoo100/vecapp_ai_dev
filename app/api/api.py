@@ -1,62 +1,37 @@
 from fastapi import FastAPI, Depends, HTTPException, APIRouter
-from fastapi.middleware.cors import CORSMiddleware
+#from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
-from app.core.auth import get_current_tenant, verify_api_key
-from app.core.database import Database
-from app.core.analytics import AnalyticsService
-from app.models.tenant import Tenant
-from app.models.visitor import Visitor
+#from app.core.api_key_auth import get_current_tenant, verify_api_key
+#from app.core.database import Database
+from app.services.analytics_service import AnalyticsService
+from app.database.models.tenant import Tenant
+from app.database.models.visitor import Visitor
 from app.agents.data_collection_agent import DataCollectionAgent
 from app.agents.volunteer_coordination_agent import VolunteerCoordinationAgent
 from app.core.messaging import MessageQueue
 from app.core.notifications import NotificationService
+from app.api.routes import (
+    auth_routes,
+    visitor,
+    volunteer,
+    analytics,
+    followup,
+    followup_notes,
+    followup_summary_report
+)
 
-# Initialize main router
-router = APIRouter()
+# Initialize main API router
+router = APIRouter(prefix="/api/v1")
 
-# Visitor Management Endpoints
-@router.post("/api/v1/visitors")
-async def create_visitor(
-    visitor_data: Dict[str, Any],
-    tenant: Tenant = Depends(get_current_tenant),
-    api_key: str = Depends(verify_api_key)
-):
-    """Create new visitor and trigger MAS workflow"""
-    try:
-        # Initialize Data Collection Agent
-        dca = DataCollectionAgent(
-            agent_id=f"dca-{tenant.id}",
-            tenant_id=tenant.id,
-            database=Database()
-        )
-        
-        # Process visitor data
-        result = await dca.process(visitor_data)
-        
-        return {
-            "status": "success",
-            "visitor_id": result['visitor_id'],
-            "message": "Visitor processing initiated"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/api/v1/visitors/{visitor_id}")
-async def get_visitor(
-    visitor_id: str,
-    tenant: Tenant = Depends(get_current_tenant),
-    api_key: str = Depends(verify_api_key)
-):
-    """Get visitor details and engagement status"""
-    try:
-        db = Database()
-        visitor = await db.get_visitor(visitor_id, tenant.id)
-        if not visitor:
-            raise HTTPException(status_code=404, detail="Visitor not found")
-        return visitor
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Include all route modules
+router.include_router(visitor.router)
+router.include_router(volunteer.router)
+router.include_router(analytics.router)
+router.include_router(followup.router)
+router.include_router(followup_notes.router)
+router.include_router(followup_summary_report.router)
+router.include_router(auth_routes.router)
 
 # Volunteer Management Endpoints
 @router.post("/api/v1/volunteers/assignments")

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from typing import Dict, Any
-from core.auth import get_current_tenant
-from agents.followup_summary_agent import FollowupSummaryAgent
-from app.database.tenant_management import Tenant
+from app.core.api_key_auth import get_current_tenant
+from app.agents.followup_summary_agent import FollowupSummaryAgent
+from app.models.tenant import Tenant
 from app.models import Visitor, FollowUpTask
+from app.api.middleware import limiter
 import boto3
 import json
 
@@ -13,7 +14,9 @@ router = APIRouter(prefix="/api/v1/followup-notes")
 sqs_client = boto3.client('sqs', region_name='your-region')
 
 @router.post("/generate")
+@limiter.limit("5/minute")
 async def generate_followup_note(
+    request: Request,
     background_tasks: BackgroundTasks,
     tenant: Tenant = Depends(get_current_tenant)
 ):
