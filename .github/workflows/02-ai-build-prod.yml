@@ -52,7 +52,7 @@ jobs:
           tags: determinas/vecap_ai:${{ github.sha }}
 
 
-      -- name: Report Status
+      - name: Report Status
         if: always()
         uses: ravsamhq/notify-slack-action@v1
         with:
