@@ -1,4 +1,4 @@
-name: CD-pipeline prod
+name: CI-pipeline prod
 
 on:
   pull_request:
