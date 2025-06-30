@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vecap_ai-depl
+  name: vecap-ai-depl
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: vecap_ai
+      app: vecap-ai
   template:
     metadata:
       labels:
-        app: vecap_ai
+        app: vecap-ai
     spec:
       imagePullSecrets:
       - name: docker-cred
       containers:
-        - name: vecap_ai
+        - name: vecap-ai
           image: determinas/vecap_ai:dev 
           imagePullPolicy: Always
           ports:
@@ -119,19 +119,19 @@ spec:
                   name: slack-creds
                   key: KAFKASLACK_WEBHOOK_URL   
       imagePullSecrets:
-        - name: docker-creds
+        - name: docker-cred
 
 ---
 
 apiVersion: v1
 kind: Service
 metadata:
-  name: vecap_ai-srv
+  name: vecap-ai-srv
 spec:
   selector:
-    app: vecap_ai
+    app: vecap-ai
   ports:
-    - name: vecap_ai
+    - name: vecap-ai
       protocol: TCP
       port: 4500
       targetPort: 4500
