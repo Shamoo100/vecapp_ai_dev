@@ -17,7 +17,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("app")
 
-# Test database connection on startup
+# Test database connection on startup....
 if not test_db_connection():
     logger.error("Database connection test failed. Exiting application.")
     import sys
