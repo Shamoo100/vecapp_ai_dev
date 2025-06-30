@@ -57,14 +57,14 @@ jobs:
 
       - run: kubectl rollout restart deployment vecap-ai-depl
 
-      # - name: Report Status
-      #   if: always()
-      #   uses: ravsamhq/notify-slack-action@v1
-      #   with:
-      #     status: ${{ job.status }} # required
-      #     notify_when: 'success,failure,warnings'
-      #     notification_title: '{workflow} has {status_message}'
-      #     message_format: '{emoji} *DEPLOY AI SERVICE* {status_message} in <{repo_url}|{repo}>'
-      #     footer: 'For Vec-App Project' #'Linked to Repo <{repo_url}|{repo}>'
-      #   env:
-      #     SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      - name: Report Status
+        if: always()
+        uses: ravsamhq/notify-slack-action@v1
+        with:
+          status: ${{ job.status }}
+          notify_when: "success,failure,warnings"
+          notification_title: "{workflow} has {status_message}"
+          message_format: "{emoji} *BUILD AI SERVICE* {status_message} in <{repo_url}|{repo}>"
+          footer: "For Vec-App Project"
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
