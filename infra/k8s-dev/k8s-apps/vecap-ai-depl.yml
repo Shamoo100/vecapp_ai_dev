@@ -119,7 +119,7 @@ spec:
                   name: slack-creds
                   key: KAFKASLACK_WEBHOOK_URL   
       imagePullSecrets:
-        - name: docker-creds
+        - name: docker-cred
 
 ---
 
