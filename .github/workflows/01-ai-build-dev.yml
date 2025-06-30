@@ -1,4 +1,4 @@
-name: build-connect-dev
+name: CI-pipeline dev
 
 on:
   pull_request:
