@@ -7,11 +7,16 @@ from dotenv import load_dotenv
 
 # Import your models
 from app.database.models.base import Base
+from app.database.models.tenant import  Tenant
 from app.database.models.person import Person
-from app.database.models.tenant import  ChurchBranch
 from app.database.models.visitor import Visitor
-from app.database.models.volunteer import Volunteer
-# Import other models as needed
+from app.database.models.notes import Notes
+from app.database.models.reports import Report
+from app.database.models.decision_audit import DecisionAudit
+from app.database.models.feedback import AIFeedbackAnalysis
+from app.database.models.recommendation_log import AIRecommendationLog
+from app.database.models.suppression_log import SuppressionLog
+#import other models as needed
 
 # Import tenant context
 from app.database.tenant_context import TenantContext
@@ -61,10 +66,20 @@ async def get_tenant_schemas():
     return await TenantContext.list_tenant_schemas()
 
 
-def do_run_migrations(connection):
+from sqlalchemy import text
+
+async def create_schema_if_not_exists(connection, schema_name):
+    """Create schema if it does not exist."""
+    result = connection.execute(text(f"SELECT schema_name FROM information_schema.schemata WHERE schema_name = '{schema_name}'"))
+    if not result.fetchone():
+        connection.execute(text(f"CREATE SCHEMA {schema_name}"))
+
+
+async def do_run_migrations(connection):
     """Run migrations with the given connection."""
-    # If tenant schema specified, run migrations for that schema only
+    # If tenant schema specified, create schema if it does not exist
     if tenant_schema:
+        await create_schema_if_not_exists(connection, tenant_schema)
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
@@ -101,7 +116,7 @@ def run_migrations_online():
     )
 
     with connectable.connect() as connection:
-        do_run_migrations(connection)
+        asyncio.run(do_run_migrations(connection))
 
 
 if context.is_offline_mode():

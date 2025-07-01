@@ -1,14 +1,20 @@
 from uuid import uuid4
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy import Column, Integer, String, Boolean
-from app.database.models.base import Base
+from uuid import uuid4
 
-class Person(Base):
+from sqlalchemy.schema import ForeignKey
+from app.database.models.base import Base
+from app.database.models.common import TimestampMixin
+from sqlalchemy.orm import relationship
+
+class Person(Base, TimestampMixin):
     __tablename__ = 'person'
+    __table_args__ = {'schema': 'demo'}
     
     #id = Column(uuid4, primary_key=True, index=True)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, index=True)
-    church_branch_id = Column(Integer, index=True)
+    tenant_id = Column(Integer,(ForeignKey("demo.tenant.id")), index=True)
     user_type_id = Column(Integer, index=True)
     fam_id = Column(Integer, index=True)
     bulk_upload_history_id = Column(Integer)
@@ -41,6 +47,7 @@ class Person(Base):
     fcm_token = Column(String)
     timezone = Column(String)
     preferred_comm_method = Column(String)
+    avatar_color = Column(String)
     
     # Church Related
     member_status = Column(String)
@@ -89,7 +96,7 @@ class Person(Base):
     # Additional Information
     social_links = Column(String)
     bio = Column(String)
-    relationship = Column(String)
+    family_relationship = Column(String)
     family_status = Column(String)
     login_status = Column(String)
     prayer_request = Column(String)
@@ -108,5 +115,6 @@ class Person(Base):
     session_expiry = Column(String)
     invited_on = Column(String)
     deleted_at = Column(String)
-    created_at = Column(String)
-    updated_at = Column(String)
+
+    # Relationships
+    tenant = relationship("Tenant", back_populates="persons")

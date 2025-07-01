@@ -7,17 +7,17 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 from uuid import uuid4
 
-from app.database.models.base import Base
+from app.database.models.base import Base, SchemaConfigMixin
 from app.database.models.common import TimestampMixin
 
 
-class ChurchBranch(Base, TimestampMixin):
-    """Database model representing a church branch tenant."""
+class Tenant(Base, TimestampMixin, SchemaConfigMixin):
+    """Database model representing a church tenant."""
     
-    __tablename__ = 'church_branch'
+    __tablename__ = 'tenant'
     __table_args__ = (
-        UniqueConstraint('domain', name='church_branch_domain_unique'),
-        {'schema': 'demo'}
+        UniqueConstraint('domain', name='tenant_domain_unique'),
+        {'schema': 'demo'}  # Default schema, can be changed via configure_schema()
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -57,7 +57,6 @@ class ChurchBranch(Base, TimestampMixin):
     
     # Timestamps
     tenant_date_created = Column(Date)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    def __repr__(self):
-        return f"<ChurchBranch(id={self.id}, name='{self.tenant_name}', domain='{self.domain}')>"
+    # #Relationships
+    persons = relationship("Person", back_populates="tenant")

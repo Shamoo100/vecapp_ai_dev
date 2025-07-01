@@ -25,11 +25,16 @@ logger = logging.getLogger('schema_migration')
 
 # Default tables to migrate
 DEFAULT_TABLES = [
-    'tenants',
+    'church_branch',
     'person',
     'notes',
     'visitors',
-    'volunteers'
+    'family_members',
+    'reports',
+    'ai_decision_audit',
+    'ai_suppression_log',
+    'ai_feedback_analysis',
+    'ai_decision_audit'
 ]
 
 async def run_migration(tables: List[str], dry_run: bool = False):

@@ -1,19 +1,21 @@
 from uuid import uuid4
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Boolean
 from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import UUID
 from datetime import datetime
 
 from app.database.models.base import Base
+from app.database.models.common import TimestampMixin
 
-class Notes(Base):
+class Notes(Base, TimestampMixin):
     __tablename__ = "notes"
 
     id = Column(Integer, primary_key=True, index=True)
-    task_id = Column(Integer, ForeignKey("tasks.id"))
-    person_id = Column(uuid4, ForeignKey("persons.id"))
-    task_assignee_id = Column(Integer, ForeignKey("task_assignees.id"))
-    recipient_id = Column(Integer, ForeignKey("recipients.id"))
-    recipient_fam_id = Column(Integer, ForeignKey("recipient_families.id"))
+    task_id = Column(Integer)
+    person_id = Column(UUID(as_uuid=True), ForeignKey("demo.person.id"))
+    task_assignee_id = Column(Integer)
+    recipient_id = Column(Integer)
+    recipient_fam_id = Column(Integer)
     
     title = Column(String)
     notes_body = Column(String)
@@ -26,15 +28,11 @@ class Notes(Base):
     is_edited = Column(Boolean, default=False)
     is_archived = Column(Boolean, default=False)
     
-    created_at = Column(DateTime, default=lambda: datetime.now(datetime.timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(datetime.timezone.utc))
+
     
     # Relationships
-    task = relationship("Task", back_populates="notes")
     person = relationship("Person", back_populates="notes")
-    task_assignee = relationship("TaskAssignee", back_populates="notes")
-    recipient = relationship("Recipient", back_populates="notes")
-    recipient_family = relationship("RecipientFamily", back_populates="notes")
+    
 
 
 # class VisitorNote(Base, TimestampMixin):

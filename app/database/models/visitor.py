@@ -4,6 +4,7 @@ from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Text, DateT
 from sqlalchemy.sql import text
 from sqlalchemy.orm import declarative_base, relationship
 from app.database.models.base import Base
+from app.database.models.common import TimestampMixin
 
 
 # Enums for constrained choices
@@ -31,8 +32,9 @@ class FamilyRelationship(Enum):
     SIBLING = "Sibling"
     OTHER = "Other"
 
-class Visitor(Base):
+class Visitor(Base, TimestampMixin):
     __tablename__ = 'visitors'
+    __table_args__ = {'schema': 'demo'}
     
     visitor_id = Column(Integer, primary_key=True, autoincrement=True)
     # Basic Information
@@ -57,10 +59,7 @@ class Visitor(Base):
     feedback = Column(Text, nullable=False)
     address = Column(Text, nullable=False)
     
-    # System fields
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), 
-                      onupdate=text('CURRENT_TIMESTAMP'))
+
     
     # Relationships
     family_members = relationship("FamilyMember", back_populates="visitor")
@@ -71,8 +70,9 @@ class Visitor(Base):
         Index('idx_visitor_name', 'first_name', 'last_name'),
     )
 
-class FamilyMember(Base):
+class FamilyMember(Base, TimestampMixin):
     __tablename__ = 'family_members'
+    __table_args__ = {'schema': 'demo'}
     
     family_member_id = Column(Integer, primary_key=True, autoincrement=True)
     visitor_id = Column(Integer, ForeignKey('visitors.visitor_id'), nullable=False)
@@ -87,10 +87,7 @@ class FamilyMember(Base):
     phone = Column(String(20), nullable=False)
     family_relationship = Column(SQLEnum(FamilyRelationship), nullable=False)
     
-    # System fields
-    created_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
-    updated_at = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'), 
-                      onupdate=text('CURRENT_TIMESTAMP'))
+
     
     # Relationships
     visitor = relationship("Visitor", back_populates="family_members")
