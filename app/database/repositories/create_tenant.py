@@ -18,7 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.database.tenant_management import TenantManager
 from app.database.models.tenant import Tenant
 from app.core.config import settings
-from app.database.tenant_context import TenantContext
+from app.database.repositories.tenant_context import TenantContext
 
 
 async def create_tenant(tenant_name: str, active: bool = True):

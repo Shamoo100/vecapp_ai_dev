@@ -43,6 +43,10 @@ class Settings(BaseSettings):
         300.0, 
         description="Maximum lifetime of inactive connections in seconds"
     )
+    DB_USE_NULL_POOL: bool = Field(
+        False,
+        description="Whether to use NullPool for database connections (useful for testing)"
+    )
     
     # JWT settings
     JWT_SECRET_KEY: str = Field(

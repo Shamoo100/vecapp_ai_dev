@@ -12,12 +12,18 @@ from app.database.models.common import TimestampMixin
 
 
 class Tenant(Base, TimestampMixin, SchemaConfigMixin):
-    """Database model representing a church tenant."""
+    """
+    Tenant-specific model stored in each tenant's isolated schema.
     
-    __tablename__ = 'tenant'
+    This model represents the tenant's own information within their
+    isolated schema. Each tenant has their own copy of this table
+    in their dedicated schema (e.g., demo.tenants, church1.tenants).
+    """
+    
+    __tablename__ = 'tenants'
     __table_args__ = (
         UniqueConstraint('domain', name='tenant_domain_unique'),
-        {'schema': 'demo'}  # Default schema, can be changed via configure_schema()
+        # Schema will be set dynamically based on tenant context
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -55,8 +61,14 @@ class Tenant(Base, TimestampMixin, SchemaConfigMixin):
     team_deletion_grace_period = Column(Integer, nullable=False, server_default=text('30'))
     group_deletion_grace_period = Column(Integer, nullable=False, server_default=text('30'))
     
+    # Registry Reference - links back to the central tenant registry
+    registry_id = Column(Integer, nullable=False, comment="References tenant_registry.id in public schema")
+    
     # Timestamps
     tenant_date_created = Column(Date)
 
-    # #Relationships
-    persons = relationship("Person", back_populates="tenant")
+    # Relationships within tenant schema
+    # persons = relationship("Person", back_populates="tenant")  # Will be enabled when Person model is ready
+    
+    def __repr__(self):
+        return f"<Tenant(id={self.id}, name='{self.tenant_name}', domain='{self.domain}')>"

@@ -9,10 +9,11 @@ from app.database.models.common import TimestampMixin
 
 class Notes(Base, TimestampMixin):
     __tablename__ = "notes"
+    __table_args__ = {'schema': 'tenant'}
 
     id = Column(Integer, primary_key=True, index=True)
     task_id = Column(Integer)
-    person_id = Column(UUID(as_uuid=True), ForeignKey("demo.person.id"))
+    person_id = Column(UUID(as_uuid=True), ForeignKey('person.id'), nullable=False)
     task_assignee_id = Column(Integer)
     recipient_id = Column(Integer)
     recipient_fam_id = Column(Integer)

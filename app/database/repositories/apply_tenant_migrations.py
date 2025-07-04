@@ -16,8 +16,8 @@ import subprocess
 import sys
 from typing import List, Optional
 
-from app.config.settings import settings
-from app.database.tenant_context import TenantContext
+from app.config.settings import Settings
+from app.database.repositories.tenant_context import TenantContext
 
 # Configure logging
 logging.basicConfig(

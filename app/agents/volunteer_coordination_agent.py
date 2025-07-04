@@ -1,10 +1,9 @@
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from app.agents.base_agent import BaseAgent
-from app.models.volunteer import Volunteer
-from app.core.messaging import MessageQueue
+from app.database.models.visitor import Visitor  # Using visitor model as volunteer model doesn't exist
 from app.core.notifications import NotificationService
-from app.core.analytics import AnalyticsService
+from app.services.analytics_service import AnalyticsService
 
 class VolunteerCoordinationAgent(BaseAgent):
     """

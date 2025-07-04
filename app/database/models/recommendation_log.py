@@ -7,7 +7,7 @@ from app.database.models.common import TimestampMixin
 
 class AIRecommendationLog(Base, TimestampMixin):
     __tablename__ = "ai_recommendation_log"
-    __table_args__ = {"schema": "demo"}
+    __table_args__ = {'schema': 'tenant'}
 
     id = Column(PostgresUUID(as_uuid=True), primary_key=True)
     person_id = Column(PostgresUUID(as_uuid=True), nullable=False)

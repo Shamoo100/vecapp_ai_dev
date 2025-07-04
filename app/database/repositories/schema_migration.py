@@ -2,7 +2,7 @@ from typing import List, Dict, Any, Optional, Set
 import asyncpg
 import logging
 from app.config.settings import get_settings
-from app.database.tenant_context import TenantContext
+from app.database.repositories.tenant_context import TenantContext
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

@@ -10,11 +10,10 @@ from sqlalchemy.orm import relationship
 
 class Person(Base, TimestampMixin):
     __tablename__ = 'person'
-    __table_args__ = {'schema': 'demo'}
+    __table_args__ = {'schema': 'tenant'} # Default schema, can be changed via configure_schema()
     
-    #id = Column(uuid4, primary_key=True, index=True)
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4, index=True)
-    tenant_id = Column(Integer,(ForeignKey("demo.tenant.id")), index=True)
+    tenant_id = Column(Integer, ForeignKey('tenants.id'), index=True)
     user_type_id = Column(Integer, index=True)
     fam_id = Column(Integer, index=True)
     bulk_upload_history_id = Column(Integer)
@@ -117,4 +116,5 @@ class Person(Base, TimestampMixin):
     deleted_at = Column(String)
 
     # Relationships
-    tenant = relationship("Tenant", back_populates="persons")
+    tenant = relationship("Tenant", back_populates="person")
+    

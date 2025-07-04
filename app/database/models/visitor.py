@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from enum import Enum
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Text, DateTime, Enum as SQLEnum, Date, UniqueConstraint, Index
 from sqlalchemy.sql import text
 from sqlalchemy.orm import declarative_base, relationship
@@ -34,10 +35,16 @@ class FamilyRelationship(Enum):
 
 class Visitor(Base, TimestampMixin):
     __tablename__ = 'visitors'
-    __table_args__ = {'schema': 'demo'}
+    __table_args__ = (
+        UniqueConstraint('email', 'phone', name='uix_visitor_contact'),
+        Index('idx_visitor_name', 'first_name', 'last_name'),
+        {'schema': 'tenant'}
+    )
+
     
     visitor_id = Column(Integer, primary_key=True, autoincrement=True)
     # Basic Information
+    person_id = Column(UUID(as_uuid=True), ForeignKey('person.id'), nullable=False)
     title = Column(String(20), nullable=False)
     first_name = Column(String(50), nullable=False)
     last_name = Column(String(50), nullable=False)
@@ -62,18 +69,17 @@ class Visitor(Base, TimestampMixin):
 
     
     # Relationships
-    family_members = relationship("FamilyMember", back_populates="visitor")
+    family_members = relationship("FamilyMember", back_populates="visitors")
     
-    # Constraints
-    __table_args__ = (
-        UniqueConstraint('email', 'phone', name='uix_visitor_contact'),
-        Index('idx_visitor_name', 'first_name', 'last_name'),
-    )
 
 class FamilyMember(Base, TimestampMixin):
     __tablename__ = 'family_members'
-    __table_args__ = {'schema': 'demo'}
-    
+    __table_args__ = (
+        UniqueConstraint('email', 'phone', name='uix_family_contact'),
+        Index('idx_family_relationship', 'family_relationship'),
+        {'schema': 'tenant'}
+    )
+   
     family_member_id = Column(Integer, primary_key=True, autoincrement=True)
     visitor_id = Column(Integer, ForeignKey('visitors.visitor_id'), nullable=False)
     
@@ -92,8 +98,3 @@ class FamilyMember(Base, TimestampMixin):
     # Relationships
     visitor = relationship("Visitor", back_populates="family_members")
     
-    # Constraints
-    __table_args__ = (
-        UniqueConstraint('email', 'phone', name='uix_family_contact'),
-        Index('idx_family_relationship', 'family_relationship'),
-    )

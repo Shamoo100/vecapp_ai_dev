@@ -1,12 +1,11 @@
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
-from app.database.database import engine
-from app.models.metrics import VisitorMetrics, EngagementMetrics, VolunteerMetrics
+from app.database.repositories.connection import DatabaseConnection
 
 class AnalyticsService:
-    def __init__(self, tenant_id: str, database: Database):
+    def __init__(self, tenant_id: str):
         self.tenant_id = tenant_id
-        self.database = database
+        self.db_connection = DatabaseConnection
 
     async def get_dashboard_metrics(
         self,

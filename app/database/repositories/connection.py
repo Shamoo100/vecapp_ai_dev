@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.config.settings import get_settings
-from app.database.tenant_context import TenantContext
+from app.database.repositories.tenant_context import TenantContext
 from app.security.tenant_context import get_current_tenant_id, get_current_schema
 
 logger = logging.getLogger(__name__)

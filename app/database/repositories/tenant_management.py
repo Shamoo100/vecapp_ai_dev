@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional
 from datetime import datetime
 from pydantic import BaseModel
-from app.database.connection import Database
+from app.database.repositoriesconnection import Database
 
 class TenantManager:
     def __init__(self, database: Database):
@@ -13,7 +13,7 @@ class TenantManager:
             name=tenant_data['name'],
             subdomain=tenant_data['subdomain'],
             plan_type=tenant_data['plan_type'],
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(datetime.timezone.utc),
             status='active'
         )
         

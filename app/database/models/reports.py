@@ -16,10 +16,10 @@ class ReportType(Enum):
 
 class Report(Base, TimestampMixin, SchemaConfigMixin):
     __tablename__ = 'reports'
-    __table_args__ = {'schema': 'demo'}  # Default schema, can be changed via configure_schema()
+    __table_args__ = {'schema': 'tenant'}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
-    church_branch_id = Column(Integer, ForeignKey('demo.tenant.id'), nullable=False)
+    tenant_id = Column(Integer, ForeignKey('tenants.id'), nullable=False)
     report_type = Column(String(50), nullable=False)  # e.g., "Snapshot", "Journey", "Weekly"
     date_range_start = Column(Date)
     date_range_end = Column(Date)

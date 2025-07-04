@@ -3,25 +3,93 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.database import get_db_session
-from app.schemas.tenant import TenantCreate, TenantUpdate, TenantInDB
-from app.services.tenant_service import TenantService
+from app.api.schemas.tenant import (
+    TenantCreate, TenantUpdate, TenantInDB, TenantSchemaProvision, 
+    TenantMigrationRequest, TenantMigrationStatus, TenantProvisionResponse,
+    TenantStatusUpdate
+)
+from app.services.multi_tenant_service import MultiTenantService
 
 router = APIRouter()
-tenant_service = TenantService()
+tenant_service = MultiTenantService()
 
 @router.post(
     "/", 
     response_model=TenantInDB, 
     status_code=status.HTTP_201_CREATED,
     summary="Create Tenant",
-    description="Create a new tenant in the system."
+    description="Create a new tenant in the system with optional schema provisioning and migrations."
 )
 async def create_tenant(
     tenant_in: TenantCreate, 
     db: AsyncSession = Depends(get_db_session)
 ):
-    """Create a new tenant."""
-    return await tenant_service.create_tenant(db, tenant_in)
+    """Create a new tenant with optional schema provisioning and migrations."""
+    try:
+        result = await tenant_service.create_tenant(db, tenant_in)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post(
+    "/provision-schema", 
+    response_model=TenantProvisionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Provision Tenant Schema",
+    description="Provision database schema for an existing tenant."
+)
+async def provision_tenant_schema(
+    provision_request: TenantSchemaProvision,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """Provision database schema for an existing tenant."""
+    try:
+        result = await tenant_service.provision_tenant_schema(db, provision_request)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@router.post(
+    "/run-migrations", 
+    response_model=TenantMigrationStatus,
+    status_code=status.HTTP_200_OK,
+    summary="Run Tenant Migrations",
+    description="Run database migrations for a specific tenant."
+)
+async def run_tenant_migrations(
+    migration_request: TenantMigrationRequest,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """Run database migrations for a specific tenant."""
+    try:
+        result = await tenant_service.run_tenant_migrations(db, migration_request)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@router.get(
+    "/{tenant_id}/migration-status", 
+    response_model=TenantMigrationStatus,
+    summary="Get Tenant Migration Status",
+    description="Get migration status for a specific tenant."
+)
+async def get_tenant_migration_status(
+    tenant_id: str,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """Get migration status for a specific tenant."""
+    try:
+        result = await tenant_service.get_tenant_migration_status(db, tenant_id)
+        result.tenant_id = tenant_id
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 @router.get(
     "/{tenant_id}", 
@@ -76,6 +144,27 @@ async def update_tenant(
         )
     return tenant
 
+@router.post(
+    "/{tenant_id}/provision", 
+    response_model=TenantProvisionResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Provision Complete Tenant",
+    description="Provision schema and run migrations for an existing tenant."
+)
+async def provision_complete_tenant(
+    tenant_id: str,
+    run_migrations: bool = True,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """Provision complete tenant (schema + migrations)."""
+    try:
+        result = await tenant_service.provision_tenant(db, tenant_id, run_migrations)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
 @router.delete(
     "/{tenant_id}", 
     status_code=status.HTTP_204_NO_CONTENT,
@@ -87,10 +176,9 @@ async def delete_tenant(
     db: AsyncSession = Depends(get_db_session)
 ):
     """Delete a tenant."""
-    tenant = await tenant_service.get_tenant(db, tenant_id)
-    if not tenant:
+    success = await tenant_service.delete_tenant(db, tenant_id)
+    if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tenant not found"
+            detail="Tenant not found or could not be deleted"
         )
-    await tenant_service.delete_tenant(db, tenant_id)

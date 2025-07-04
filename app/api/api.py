@@ -18,7 +18,9 @@ from app.api.routes import (
     analytics,
     followup,
     followup_notes,
-    followup_summary_report
+    followup_summary_report,
+    tenants,
+    batch_tenants
 )
 
 # Initialize main API router
@@ -32,6 +34,8 @@ router.include_router(followup.router)
 router.include_router(followup_notes.router)
 router.include_router(followup_summary_report.router)
 router.include_router(auth_routes.router)
+router.include_router(tenants.router, prefix="/tenants", tags=["tenants"])
+router.include_router(batch_tenants.router, prefix="/batch-tenants", tags=["batch-tenants"])
 
 # Volunteer Management Endpoints
 @router.post("/api/v1/volunteers/assignments")
