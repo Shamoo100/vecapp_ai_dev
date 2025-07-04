@@ -7,12 +7,11 @@ Usage: python create_tenant.py tenant_name [--active=true/false]
 import asyncio
 import sys
 import argparse
+import os
 from uuid import uuid4
 from datetime import datetime
 
 # Add the project root to the Python path
-import os
-import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.database.tenant_management import TenantManager

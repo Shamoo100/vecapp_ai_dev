@@ -68,13 +68,6 @@ async def get_tenant_id(request: Request) -> Optional[str]:
     """
     return getattr(request.state, 'tenant_id', None) or get_current_tenant_id()
 
-from typing import Optional
-from fastapi import Depends, Header, HTTPException
-import logging
-from contextvars import ContextVar
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-
 logger = logging.getLogger(__name__)
 
 # Context variable to store the current tenant schema
