@@ -1,0 +1,141 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vecap-ai-depl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vecap-ai
+  template:
+    metadata:
+      labels:
+        app: vecap-ai
+    spec:
+      imagePullSecrets:
+      - name: docker-cred
+      containers:
+        - name: vecap-ai
+          image: determinas/vecap_ai:dev 
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 4500
+            - containerPort: 50051
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-access-creds
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-access-creds
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_DEFAULT_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: aws-access-creds
+                  key: AWS_DEFAULT_REGION
+            - name: AWS_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: aws-access-creds
+                  key: AWS_BUCKET
+            - name: NODE_ENV
+              value: "development"
+            - name: JWT_TOKEN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-creds
+                  key: JWT_TOKEN_KEY
+            - name: DB_CONNECTION
+              valueFrom:
+                secretKeyRef:
+                  name: aws-db-creds
+                  key: DB_CONNECTION
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: aws-db-creds
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: aws-db-creds
+                  key: DB_PORT
+            - name: DB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: aws-db-creds
+                  key: DB_VECAPP_AI
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: aws-db-creds
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aws-db-creds
+                  key: DB_PASSWORD
+            - name: REDIS_URL
+              value: redis://redis-srv.default.svc.cluster.local:6379
+            - name: AWS_BASE_URL
+              value: "https://vecapp-bucket-dev.s3.amazonaws.com"
+            - name: AWS_QUEUE_SERVICE_ENDPOINT
+              value: "https://sqs.us-east-1.amazonaws.com/720375049643"
+            - name: AWS_TOPIC_ARN_SERVICE_ENDPOINT
+              value: "arn:aws:sns:us-east-1:720375049643:"
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: K8S_POD_IP
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: status.podIP
+            - name: K8S_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: OTEL_EXPORTER_OTLP_INSECURE
+              value: "true"
+            - name: SERVICE_NAME
+              value: "VECAP_AI_SERVICE"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "$(HOST_IP):4317"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.name=$(SERVICE_NAME),deployment.environment=$(NODE_ENV),k8s.pod.ip=$(K8S_POD_IP),k8s.pod.uid=$(K8S_POD_UID)" 
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: slack-creds
+                  key: SLACK_WEBHOOK_URL
+            - name: KAFKASLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: slack-creds
+                  key: KAFKASLACK_WEBHOOK_URL   
+      imagePullSecrets:
+        - name: docker-cred
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: vecap-ai-srv
+spec:
+  selector:
+    app: vecap-ai
+  ports:
+    - name: vecap-ai
+      protocol: TCP
+      port: 4500
+      targetPort: 4500
+    - name: grpc
+      protocol: TCP
+      port: 50051
+      targetPort: 50051

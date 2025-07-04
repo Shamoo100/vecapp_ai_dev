@@ -1,12 +1,12 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vecapp-ai-depl
+  name: ai-depl
   namespace: default
   annotations:
     deployment.kubernetes.io/revision: '1'
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: analytics
@@ -16,8 +16,8 @@ spec:
         app: analytics
     spec:
       containers:
-        - name: analytics
-          image: vecapp/analytics:latest
+        - name: ai
+          image: vecapp/ai:dev
           ports:
             - containerPort: 8000
           env:
