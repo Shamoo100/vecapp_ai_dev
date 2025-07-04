@@ -1,7 +1,7 @@
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
 from .base_agent import BaseAgent
-from core.messaging import MessageQueue
+from app.core.messaging import MessageQueue
 from app.database.connection import Database
 from models.metrics import EngagementMetrics
 

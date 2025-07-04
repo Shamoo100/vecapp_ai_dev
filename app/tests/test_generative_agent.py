@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import Mock, patch
 from agents.generative_agent import GenerativeAgent
-from core.messaging import MessageQueue
+from app.core.messaging import MessageQueue
 from datetime import datetime
 
 @pytest.fixture
@@ -40,4 +40,4 @@ async def test_generate_persona(generative_agent):
         assert result['visitor_id'] == '123'
         assert 'persona' in result
         assert 'recommendations' in result
-        assert 'follow_up_time' in result 
+        assert 'follow_up_time' in result

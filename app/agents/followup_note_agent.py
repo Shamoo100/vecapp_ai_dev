@@ -3,7 +3,7 @@ import openai
 from datetime import timedelta
 from .base_agent import BaseAgent
 from models.visitor import Visitor
-from core.messaging import MessageQueue
+from app.core.messaging import MessageQueue
 
 class FollowupNoteAgent(BaseAgent):
     def __init__(self, agent_id: str, schema: str, openai_key: str, message_queue: MessageQueue):

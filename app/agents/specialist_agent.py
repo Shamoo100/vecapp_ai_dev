@@ -1,6 +1,6 @@
 from typing import Dict, Any
 from .base_agent import BaseAgent
-from core.messaging import MessageQueue
+from app.core.messaging import MessageQueue
 import tensorflow as tf
 import numpy as np
 
