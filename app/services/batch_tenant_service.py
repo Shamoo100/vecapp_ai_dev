@@ -8,13 +8,13 @@ from sqlalchemy import text
 import logging
 
 from app.services.multi_tenant_service import MultiTenantService
-from app.api.schemas.batch_tenant import (
+from app.api.schemas.tenant import (
     BatchTenantCreate, BatchProvisioningResponse, TenantProvisioningResult,
     BatchProvisioningStatus, TenantProvisioningConfig, TenantBulkUpdate,
     BulkUpdateResponse
 )
 from app.api.schemas.tenant import TenantCreate, TenantInDB
-from app.database.database import get_db_session
+
 
 logger = logging.getLogger(__name__)
 

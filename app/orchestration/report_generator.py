@@ -6,7 +6,6 @@ from langchain.chains import LLMChain
 from langchain.chat_models import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.schema import Document
-from langchain.retrievers import TenantAwareRetriever
 from langchain.prompts import PromptTemplate
 from langchain.prompts.chat import (
     ChatPromptTemplate,
@@ -16,13 +15,13 @@ from langchain.prompts.chat import (
 from langchain.output_parsers import PydanticOutputParser
 from langchain_core.messages import SystemMessage, HumanMessage
 import langsmith
-from langchain.smith import RunEvaluator
+#from langchain.smith import RunEvaluator
 from langgraph.graph import Graph
 
 from app.data.data_fetcher import DataFetcher
-from app.data.report_repository import ReportRepository
+from app.data.report_repository2 import ReportRepository
 from app.data.storage import S3Storage
-from app.models.report import ReportStatus
+from app.api.schemas.report import ReportStatus
 from app.utils.pdf_generator import PDFGenerator
 from app.security.token_service import TokenService
 from app.config.settings import get_settings

@@ -45,6 +45,15 @@ class MigrationManager:
         
         # Set up environment variables
         env = os.environ.copy()
+        
+        # Add project root to PYTHONPATH to ensure proper imports
+        project_root = Path(__file__).parent.parent.parent.parent
+        current_pythonpath = env.get('PYTHONPATH', '')
+        if current_pythonpath:
+            env['PYTHONPATH'] = f"{project_root}:{current_pythonpath}"
+        else:
+            env['PYTHONPATH'] = str(project_root)
+        
         if env_vars:
             env.update(env_vars)
             
@@ -52,6 +61,7 @@ class MigrationManager:
         if env_vars:
             print(f"Environment: {env_vars}")
             
+        # Run from migrations directory (original behavior)
         result = subprocess.run(cmd, cwd=self.migrations_dir, env=env, capture_output=True, text=True)
         
         if result.stdout:

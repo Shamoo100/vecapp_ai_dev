@@ -1,8 +1,8 @@
 from typing import Optional, Dict, Any, Type, TypeVar
 from contextlib import asynccontextmanager
 from uuid import UUID
-from app.database.connection_manager import ConnectionManager
-from app.data.report_repository import ReportRepository
+from app.database.connection import ConnectionManager
+from app.data.interfaces.report_repository import ReportRepository
 # Import other repositories as needed
 
 T = TypeVar('T')

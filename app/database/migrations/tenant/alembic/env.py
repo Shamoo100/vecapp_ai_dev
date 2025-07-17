@@ -7,38 +7,38 @@ import sys
 import logging
 from pathlib import Path
 
-# Add project root to Python path
-project_root = Path(__file__).parent.parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
-
-# Import tenant-specific models
-from app.database.models.base import Base
-from app.database.models.visitor import Visitor, FamilyMember
-from app.database.models.tenant import Tenant
-from app.database.models.person import Person
-from app.database.models.decision_audit import DecisionAudit
-from app.database.models.recommendation_log import AIRecommendationLog
-from app.database.models.suppression_log import SuppressionLog
-from app.database.models.feedback import AIFeedbackAnalysis
-from app.database.models.notes import Notes
-from app.database.models.reports import Report
-
+# Load environment variables
 load_dotenv()
+# Add project root to python path
+project_root = Path(__file__).parent.parent.parent.parent.parent
+sys.path.append(str(project_root))
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
+#config
 config = context.config
 
 # Set SQLAlchemy URL from environment variable
 config.set_main_option("sqlalchemy.url", os.environ.get("DATABASE_URL"))
 
-# Interpret the config file for Python logging.
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-logger = logging.getLogger('alembic.env')
 
-# Include all tenant-specific models metadata
+logger = logging.getLogger('alembic.env')
+# Import ONLY tenant schema models
+try:
+    from app.database.models.tenant import (
+        Base, AIPerson, AIFam, AINotes, AITask, Tenant,
+        DecisionAudit, AIFeedback, AIRecommendationLog, 
+        SuppressionLog, Report
+    )
+except ImportError as e:
+    print(f"Import error: {e}")
+    import traceback
+    traceback.print_exc()
+    raise
+
+# Use Base.metadata - now contains ONLY tenant models
 target_metadata = Base.metadata
+print(f"Tenant schema tables: {list(Base.metadata.tables.keys())}")
 
 def get_tenant_schema():
     """Get the tenant schema from environment variable."""

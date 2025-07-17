@@ -1,8 +1,9 @@
 from sqlalchemy import (
     Column, String, Boolean, JSON, Integer, Date, 
-    DateTime, Enum as SQLEnum, UniqueConstraint, text, func
+    DateTime, Enum as SQLEnum, UniqueConstraint, text, func,
+    Float, Text  # ADD THESE MISSING IMPORTS
 )
-from app.database.models.enums import Gender
+from app.database.models.enums import Gender, FollowUpType
 
 # common.py
 class PersonMixin:
@@ -19,3 +20,20 @@ class TimestampMixin:
     
     created_at = Column(DateTime, default=func.now(), nullable=False)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class SchemaConfigMixin:
+    """Mixin for schema configuration."""
+    __table_args__ = {'schema': None}  # Will be overridden by subclasses
+
+
+class AIProcessingMixin:
+    """Mixin for AI processing metadata."""
+    ai_confidence_score = Column(Float)  # 0.0 to 1.0
+    ai_model_version = Column(String(50))
+    ai_processing_status = Column(String(20))
+    processing_started_at = Column(DateTime(timezone=True))
+    processing_completed_at = Column(DateTime(timezone=True))
+    retry_count = Column(Integer, default=0)
+    error_message = Column(Text)
+    follow_up_note_type = Column(SQLEnum(FollowUpType))

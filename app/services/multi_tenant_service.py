@@ -11,7 +11,7 @@ from sqlalchemy import text, select
 import logging
 
 from app.database.repositories.tenant import TenantRepository
-from app.database.models.tenant_registry import TenantRegistry
+from app.database.models.public.tenant_registry import TenantRegistry
 from app.api.schemas.tenant import (
     TenantCreate, TenantUpdate, TenantInDB,
     TenantSchemaProvision, TenantMigrationRequest,
@@ -43,8 +43,8 @@ class MultiTenantService:
     
     async def create_tenant(self, db: AsyncSession, tenant_in: TenantCreate) -> TenantInDB:
         """Create a new tenant in the registry."""
-        # Generate schema name and API key
-        schema_name = self._generate_schema_name(tenant_in.domain)
+        # Use custom schema name if provided, otherwise generate from domain
+        schema_name = tenant_in.schema_name if tenant_in.schema_name else self._generate_schema_name(tenant_in.domain)
         api_key = self._generate_api_key()
         
         # Prepare tenant registry data

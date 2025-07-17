@@ -2,6 +2,9 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from typing import Optional, Dict, List, Any
 import logging
+from app.security.api_key import get_current_tenant
+from app.database.models.tenant import Tenant  
+from uuid import UUID, uuid4 
 
 logger = logging.getLogger(__name__)
 
@@ -12,12 +15,12 @@ class User:
     User class representing an authenticated user.
     """
     
-    def __init__(self, id: str, username: str, email: str, roles: List[str], permissions: Dict[str, List[str]]):
+    def __init__(self, id: UUID, username: str, email: str, roles: List[str], permissions: Dict[str, List[str]]):
         """
         Initialize a user.
         
         Args:
-            id: The user ID
+            id: The user ID (UUID)
             username: The username
             email: The user's email
             roles: List of roles assigned to the user
@@ -100,10 +103,10 @@ async def authenticate_user(token: str = Depends(oauth2_scheme)) -> User:
     
     # Create a dummy user for testing
     user = User(
-        id="user123",
-        username="testuser",
-        email="test@example.com",
-        roles=["admin"],
+        id=uuid4(),  # Use UUID for id
+        username="ai_user",
+        email="ai_user@example.com",
+        roles=["super_admin"],
         permissions={
             "tenant123": ["manage_reports", "view_reports", "generate_reports", "delete_reports"]
         }
@@ -113,3 +116,17 @@ async def authenticate_user(token: str = Depends(oauth2_scheme)) -> User:
     set_current_user(user)
     
     return user
+
+async def get_current_tenant_admin(
+    current_user: User = Depends(authenticate_user),
+    current_tenant: Tenant = Depends(get_current_tenant)
+) -> User:
+    """
+    Get the current tenant admin, verifying permissions.
+    """
+    if "admin" not in current_user.roles or not current_user.has_permission("admin", str(current_tenant.id)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions for this tenant"
+        )
+    return current_user

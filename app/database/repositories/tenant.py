@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from sqlalchemy.sql import Select
 
-from app.database.repositories.base import BaseRepository
-from app.database.models.tenant_registry import TenantRegistry
+from app.database.repositories.base_repository import BaseRepository
+from app.database.models.public.tenant_registry import TenantRegistry
 
 
 class TenantRepository(BaseRepository[TenantRegistry]):

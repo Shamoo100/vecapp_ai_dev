@@ -94,9 +94,24 @@ async def test_database_connection():
 
 def run_test():
     """Run the database connection test."""
-    loop = asyncio.get_event_loop()
-    success = loop.run_until_complete(test_database_connection())
-    return success
+    try:
+        # Try to get the current event loop
+        loop = asyncio.get_running_loop()
+        # If we're already in an async context, create a new task
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, test_database_connection())
+            success = future.result()
+        return success
+    except RuntimeError:
+        # No event loop running, safe to use run_until_complete
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            success = loop.run_until_complete(test_database_connection())
+            return success
+        finally:
+            loop.close()
 
 if __name__ == "__main__":
     success = run_test()

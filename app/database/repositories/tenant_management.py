@@ -1,7 +1,7 @@
 from typing import Dict, Any, Optional
 from datetime import datetime
 from pydantic import BaseModel
-from app.database.repositoriesconnection import Database
+from app.database.repositories.connection import Database
 
 class TenantManager:
     def __init__(self, database: Database):
@@ -48,7 +48,7 @@ class TenantManager:
         This creates a dedicated schema for the tenant and initializes all required tables
         within that schema using Alembic migrations, ensuring proper data isolation between tenants.
         """
-        from app.database.tenant_context import TenantContext
+        from app.database.tenant_context2 import TenantContext
         import subprocess
         import logging
         

@@ -4,11 +4,26 @@ from alembic import context
 from logging.config import fileConfig
 from dotenv import load_dotenv
 import os
+import sys
 import logging
+from pathlib import Path
 
-# For public schema, we'll define minimal metadata
-# This avoids complex imports and focuses on tenant registry only
-target_metadata = MetaData()
+# Add project root to python Path
+project_root = Path(__file__).parent.parent.parent.parent.parent
+sys.path.append(str(project_root))
+
+# Import ONLY public schema models
+try:
+    from app.database.models.public import Base, TenantRegistry
+except ImportError as e:
+    print(f"Import error: {e}")
+    import traceback
+    traceback.print_exc()
+    raise
+
+# Use Base.metadata - now contains ONLY TenantRegistry
+target_metadata = Base.metadata
+print(f"Public schema tables: {list(Base.metadata.tables.keys())}")
 
 load_dotenv()
 
@@ -24,7 +39,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 logger = logging.getLogger('alembic.env')
 
-# Metadata is already defined above
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode for public schema only."""

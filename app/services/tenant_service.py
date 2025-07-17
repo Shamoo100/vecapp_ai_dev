@@ -8,8 +8,8 @@ from sqlalchemy import text
 import logging
 
 from app.database.repositories.tenant import TenantRepository
-from app.schemas.tenant import (
-    TenantCreate, TenantUpdate, TenantInDB, 
+from app.api.schemas.tenant import (
+TenantCreate, TenantUpdate, TenantInDB, 
     TenantSchemaProvision, TenantMigrationRequest, 
     TenantMigrationStatus, TenantProvisionResponse
 )

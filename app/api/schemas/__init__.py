@@ -5,4 +5,3 @@ from .tenant import (
     TenantMigrationStatus, TenantProvisionResponse
 )
 
-# Ensure all models are imported for proper schema creation

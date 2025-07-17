@@ -8,8 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.config.settings import get_settings
-from app.database.repositories.tenant_context import TenantContext
-from app.security.tenant_context import get_current_tenant_id, get_current_schema
+from app.database.repositories.tenant_context import TenantContext 
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -115,16 +114,10 @@ class DatabaseConnection:
         tenant_id: Optional[UUID] = None, 
         db_name: str = DEFAULT_DB
     ) -> AsyncContextManager[asyncpg.Connection]:
-        """
-        Get a raw asyncpg connection with tenant schema set.
-        
-        Args:
-            tenant_id: Optional tenant ID to set schema context
-            db_name: Database identifier
-            
-        Yields:
-            Database connection with proper schema context
-        """
+        # Use centralized get_schema_name
+        if tenant_id:
+            schema_name = get_schema_name(str(tenant_id))
+            set_current_schema(schema_name)  # Set using centralized function
         pool = await cls.get_pool(db_name)
         
         # If tenant_id not provided, try to get from current context

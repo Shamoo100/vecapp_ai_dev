@@ -79,8 +79,11 @@ class SchemaConfigMixin:
             
             cls.__table_args__ = tuple(args_list)
 
-# Create engine (you might want to move this to a config file)
-engine = create_engine("postgresql://user:password@localhost/vecap_db")
+# Get database connection details from environment variables
+DATABASE_URL = os.getenv('DATABASE_URL')
+
+# Create engine using environment variables
+engine = create_engine(DATABASE_URL)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
