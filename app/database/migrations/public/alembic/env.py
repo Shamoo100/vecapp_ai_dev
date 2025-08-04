@@ -14,7 +14,7 @@ sys.path.append(str(project_root))
 
 # Import ONLY public schema models
 try:
-    from app.database.models.public import Base, TenantRegistry
+    from app.database.models.public import Base, TenantRegistry, ai_rate_limit_log
 except ImportError as e:
     print(f"Import error: {e}")
     import traceback
@@ -39,7 +39,37 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 logger = logging.getLogger('alembic.env')
 
+def include_object_filter(obj, name, type_, reflected, compare_to):
+    """
+    Filter function to determine which objects should be included in migrations.
+    
+    Excludes:
+    - Alembic internal tables (alembic_version)
+    - Tables from other schemas (only include public schema)
+    """
+    # Always exclude Alembic's internal tables
+    if type_ == "table" and name in ["alembic_version"]:
+        return False
+    
+    # For tables, only include those in public schema or schema-agnostic
+    if type_ == "table":
+        return obj.schema == "public" or obj.schema is None
+    
+    # Include all other object types (indexes, constraints, etc.)
+    return True
 
+def compare_type_filter(context, inspected_column, metadata_column, inspected_type, metadata_type):
+    """
+    Custom type comparison to ignore comment-only changes.
+    """
+    # If only the comment differs, don't consider it a change
+    if hasattr(inspected_column, 'comment') and hasattr(metadata_column, 'comment'):
+        if (inspected_column.comment != metadata_column.comment and 
+            str(inspected_type) == str(metadata_type)):
+            return False
+    
+    # Use default comparison for actual type changes
+    return None
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode for public schema only."""
@@ -52,8 +82,10 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         version_table_schema="public",
-        compare_type=True,
+        include_schemas=False,  # Don't scan other schemas
+        compare_type=compare_type_filter,
         compare_server_default=True,
+        include_object=include_object_filter
     )
 
     with context.begin_transaction():
@@ -74,8 +106,11 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             version_table_schema="public",
-            compare_type=True,
+            include_schemas=False,  # Don't scan other schemas
+            compare_type=compare_type_filter,
             compare_server_default=True,
+            render_as_batch=True,
+            include_object=include_object_filter
         )
 
         with context.begin_transaction():

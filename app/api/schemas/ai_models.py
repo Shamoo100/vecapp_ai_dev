@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field, UUID4
-from typing import Optional, List
+from pydantic import BaseModel, Field, UUID4, IPvAnyAddress
+from typing import Optional, List, Dict, Any
 from datetime import datetime, date
 
 # AI Person Schemas
@@ -103,6 +103,26 @@ class AITaskResponse(AITaskBase):
     is_archived: bool
     created_at: datetime
     updated_at: datetime
+
+# AI Audit Log Schemas
+class AIAuditLog(BaseModel):
+    id: Optional[int] = Field(None, description="Primary key ID")
+    user_id: UUID = Field(..., description="User ID from X-auth-user header")
+    user_email: str = Field(..., description="User email for readability")
+    tenant_id: str = Field(..., description="Tenant ID from X-request-tenant header")
+    action: str = Field(..., description="Action performed (e.g., 'feedback_submit')")
+    resource_type: Optional[str] = Field(None, description="Type of resource affected")
+    resource_id: Optional[str] = Field(None, description="ID of affected resource")
+    endpoint: Optional[str] = Field(None, description="API endpoint called")
+    http_method: Optional[str] = Field(None, description="HTTP method used")
+    ip_address: Optional[IPvAnyAddress] = Field(None, description="Client IP address")
+    user_agent: Optional[str] = Field(None, description="Client user agent")
+    details: Optional[Dict[str, Any]] = Field(None, description="Additional event details as JSON")
+    success: str = Field("true", description="Whether action succeeded")
+    error_message: Optional[str] = Field(None, description="Error message if action failed")
+    timestamp: datetime = Field(..., description="When the action occurred")
+    duration_ms: Optional[str] = Field(None, description="Request duration in milliseconds")
+
     
     class Config:
         from_attributes = True

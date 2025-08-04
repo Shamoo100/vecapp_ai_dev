@@ -11,10 +11,14 @@ from .feedback import AIFeedback
 from .recommendation_log import AIRecommendationLog
 from .suppression_log import SuppressionLog
 from .reports import Report
+from .auth import Auth
+from .user_type import UserType
+from .user_status import UserStatus
+from .ai_audit_log import AIAuditLog
 
 __all__ = [
     'Base', 'TimestampMixin', 'SchemaConfigMixin',
     'AIPerson', 'AIFam', 'AINotes', 'AITask', 'Tenant',
     'DecisionAudit', 'AIFeedback', 'AIRecommendationLog', 
-    'SuppressionLog', 'Report'
+    'SuppressionLog', 'Report', 'Auth', 'UserType', 'UserStatus', 'AIAuditLog'
 ]

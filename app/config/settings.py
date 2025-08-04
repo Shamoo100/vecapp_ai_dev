@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     
     # Database settings
     DATABASE_URL: str = Field(..., description="PostgreSQL connection string for database")
+    DB_SCHEMA: str = Field("public", description="Database schema name")
     DB_MIN_CONNECTIONS: int = Field(5, description="Minimum number of connections in the pool")
     DB_MAX_CONNECTIONS: int = Field(20, description="Maximum number of connections in the pool")
     DB_COMMAND_TIMEOUT: float = Field(60.0, description="Command timeout in seconds")
@@ -52,15 +53,19 @@ class Settings(BaseSettings):
     # OpenAI API settings
     OPENAI_API_KEY: str = Field(..., description="API key for OpenAI")
     
+    # Google API settings
+    GEMINI_API_KEY: str = Field(..., description="API key for Google Gemini")
+    
     # AWS Settings
     AWS_ACCESS_KEY_ID: Optional[str] = Field(None, description="AWS access key ID")
     AWS_SECRET_ACCESS_KEY: Optional[str] = Field(None, description="AWS secret access key")
     AWS_REGION: Optional[str] = Field(None, description="AWS region")
-    S3_BUCKET_NAME: Optional[str] = Field(None, description="AWS S3 bucket name")
-    SQS_QUEUE_URL: Optional[str] = Field(None, description="AWS SQS queue URL")
+    NEW_VISITOR_SIGNUP_QUEUE_URL: Optional[str] = Field(None, description="SQS queue URL for new visitor signup")
+    #S3_BUCKET_NAME: Optional[str] = Field(None, description="AWS S3 bucket name")
+    #SQS_QUEUE_URL: Optional[str] = Field(None, description="AWS SQS queue URL")
+    #AWS_QUEUE_SERVICE_ENDPOINT: Optional[str] = Field(None, description="AWS SQS queue service endpoint")
     
     # Missing service URLs
-    FOLLOWUP_TASK_QUEUE_URL: Optional[str] = Field(None, description="SQS queue URL for followup tasks")
     MEMBER_SERVICE_RESPONSE_QUEUE_URL: Optional[str] = Field(None, description="SQS queue URL for member service responses")
     FOLLOWUP_SERVICE_URL: Optional[str] = Field(None, description="URL for followup service")
     ANALYTICS_SERVICE_URL: Optional[str] = Field(None, description="URL for analytics service")
@@ -79,6 +84,7 @@ class Settings(BaseSettings):
     MEMBER_SERVICE_DATABASE_URL: Optional[str] = Field(None, description="PostgreSQL connection string for Member Service")
     CALENDAR_SERVICE_DATABASE_URL: Optional[str] = Field(None, description="PostgreSQL connection string for Calendar Service")
     CONNECT_SERVICE_MONGODB_URL: Optional[str] = Field(None, description="MongoDB connection string for Connect Service")
+    AUTH_SERVICE_DATABASE_URL: Optional[str] = Field(None, description="PostgreSQL connection string for Auth Service")
     
     # Pydantic v2 configuration
     model_config = {

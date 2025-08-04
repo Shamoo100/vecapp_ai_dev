@@ -41,6 +41,7 @@ class ReportGenerator:
         self.pdf_generator = PDFGenerator()
         self.token_service = TokenService()
         self.prompts = PromptLibrary.get_prompts()
+        self.service_auth = ServiceAuthClient()  # or TokenService()
     
     async def generate_report(
         self,
@@ -63,11 +64,15 @@ class ReportGenerator:
             system_token = self.token_service.generate_system_token(tenant_id)
             
             # Fetch data from required services
+            # Get service token for inter-service calls
+            service_token = await self.service_auth.get_service_token(str(tenant_id))
+            
+            # Use token for data fetching
             followup_data = await self.data_fetcher.fetch_followup_data(
                 tenant_id=tenant_id,
                 start_date=start_date,
                 end_date=end_date,
-                auth_token=system_token
+                auth_token=service_token
             )
             
             analytics_data = await self.data_fetcher.fetch_analytics_data(

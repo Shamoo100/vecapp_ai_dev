@@ -1,5 +1,5 @@
 # app/database/repositories/tenant_context.py
-from typing import Optional, AsyncContextManager, Dict, List
+from typing import Optional, AsyncContextManager, Dict, List, Any
 import asyncpg
 from contextlib import asynccontextmanager
 import logging
@@ -78,6 +78,35 @@ class TenantContext:
                 "WHERE schema_name NOT LIKE 'pg_%' AND schema_name != 'public'"
             )
             return [record['schema_name'] for record in schemas]
+    
+    @staticmethod
+    async def get_tenant_database_context(tenant_id: str) -> Dict[str, Any]:
+        """
+        Get database context for a tenant ID.
+        
+        This is the bridge function for AI services to get database context
+        from authentication tenant information.
+        """
+        try:
+            schema_name = f"tenant_{tenant_id.lower()}"
+            schemas = await TenantContext.list_tenant_schemas()
+            schema_exists = schema_name in schemas
+            
+            return {
+                "tenant_id": tenant_id,
+                "schema_name": schema_name,
+                "schema_exists": schema_exists,
+                "database_ready": schema_exists
+            }
+        except Exception as e:
+            logger.error(f"Error getting tenant database context for {tenant_id}: {str(e)}")
+            return {
+                "tenant_id": tenant_id,
+                "schema_name": None,
+                "schema_exists": False,
+                "database_ready": False,
+                "error": str(e)
+            }
 
 class TenantContextMiddleware(BaseHTTPMiddleware):
     """Middleware to extract and validate tenant context"""

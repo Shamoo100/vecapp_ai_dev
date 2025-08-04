@@ -310,3 +310,21 @@ The system uses the following sample data files for testing and development:
 - `app/data/events/team_sample_data.json` - Team member data
 
 These files provide examples of the data structure expected from the member service.
+
+
+-events data: person_id:uuid ,fam_id:uuid
+{"fam_id": "uuid", fam_head_id:"uuid", "person_id":"uuid",
+"family_context": "individual","family", //from visitor form
+"family_history":"new","existing",
+"new_family_members_id: ['123245345345','3242352354','3242342342']}
+
+-scenerios
+1-family_context is individual,family_history is new, this means fam_id,fam_head_id = person_id
+2-family_context is individual, family_history is existing, this means fam_id is exisiting fam_head_id != person_id
+3-family_context is family, family_history is new, this means the new fam_id, fam_head_id = person_id and other family members will be queried by fam_id
+4-family_context is family,family_history is exisitng, this means the fam_id is exisiting fam_head_id != person_id
+
+
+-This summary will be visitor_summary_note: in the api response
+
+#TODO: discuss data structure with elijah

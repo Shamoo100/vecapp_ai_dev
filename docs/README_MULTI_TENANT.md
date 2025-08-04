@@ -1,101 +1,117 @@
-# Multi-Tenant Schema Implementation
+# 📋 VecApp AI Tenant Service Documentation
+## 🏗️ Overview: Multi-Tenant Architecture
+The VecApp AI system uses a multi-tenant architecture where each organization (church, business, etc.) gets their own isolated database schema while sharing the same application infrastructure. This allows for:
 
-## Overview
+- Data Isolation : Each tenant's data is completely separate
+- Customization : Per-tenant configurations and features
+- Scalability : Easy addition of new tenants
+- Security : No cross-tenant data access
+## 📁 File Roles & Responsibilities
+### 🎯 Core Tenant Services 1. `tenant_service.py`
+Role : Primary Tenant Management Service
 
-This document describes the implementation of a multi-tenant architecture where each tenant has its own database schema. This approach provides strong data isolation between tenants while maintaining a single database instance.
+- Purpose : Comprehensive tenant lifecycle management
+- Key Functions :
+  - CRUD Operations : Create, read, update, delete tenants
+  - Schema Provisioning : Create isolated database schemas for tenants
+  - Migration Management : Run Alembic migrations on tenant schemas
+  - Super Admin Creation : Set up initial admin users for new tenants
+  - Data Seeding : Insert initial configuration data 2. `multi_tenant_service.py`
+Role : Enhanced Multi-Tenant Operations
 
-## Key Components
+- Purpose : Advanced tenant management with versioning support
+- Key Functions :
+  - Per-tenant versioning : Track schema versions per tenant
+  - Advanced provisioning : More sophisticated schema management
+  - Migration tracking : Detailed migration status monitoring
+  - Schema validation : Ensure schema integrity 3. `batch_tenant_service.py`
+Role : Scalable Batch Operations
 
-### 1. Tenant Context Management
+- Purpose : Handle large-scale tenant operations efficiently
+- Key Functions :
+  - Batch Creation : Create multiple tenants simultaneously
+  - Parallel Processing : Concurrent tenant provisioning
+  - Bulk Updates : Update multiple tenants at once
+  - Progress Tracking : Monitor batch operation status
+  - Error Handling : Graceful failure management with retry logic
+### 🔐 Authentication & Authorization Services 4. `auth_service.py`
+Role : Tenant-Scoped Authentication
 
-- `TenantContext` class in `app/database/tenant_context.py` provides utilities for working with tenant-specific schemas
-- `tenant_context_var` in `app/security/tenant_context.py` stores the current tenant ID in a context variable
-- `TenantContextMiddleware` extracts tenant ID from requests and sets it in the context
+- Purpose : Handle user authentication within tenant contexts
+- Key Functions :
+  - User Management : Create/manage users within tenant schemas
+  - Role Assignment : Assign roles and permissions
+  - Authentication Workflows : Login/logout within tenant context
+  - Permission Checking : Validate user permissions 5. `tenant_auth_seeder.py`
+Role : Authentication Data Seeding
 
-### 2. Database Connection Management
+- Purpose : Set up initial authentication data for new tenants
+- Key Functions :
+  - User Type Seeding : Create default user roles (admin, member, etc.)
+  - User Status Seeding : Set up user status types (active, inactive, etc.)
+  - Permission Seeding : Initialize default permissions
+  - Auth Configuration : Set up tenant-specific auth settings
+### 🗄️ Data Layer 6. `tenant_registry.py`
+Role : Central Tenant Registry Model
 
-- `DatabaseConnection` class in `app/database/connection.py` provides methods for executing queries with tenant schema context
-- All database operations automatically use the tenant schema based on the current tenant context
-- Connection pooling is maintained for performance
+- Purpose : Database model for the central tenant registry (stored in public schema)
+- Key Fields :
+  - Basic Info : tenant_name , domain , tenant_type
+  - Contact Info : email , phone , website
+  - Location : tenant_address , tenant_city , tenant_state
+  - Schema Management : schema_name , schema_provisioned , migrations_applied
+  - Security : api_key for tenant identification 7. `tenant.py`
+Role : API Data Models
 
-### 3. Schema Creation and Management
-
-- `TenantManager` in `app/database/tenant_management.py` handles creating new tenant schemas
-- Each tenant gets its own schema named `tenant_{tenant_id}`
-- Tables are created within the tenant's schema using Alembic migrations
-
-### 4. Schema Migrations with Alembic
-
-- Alembic is used to manage database schema changes across all tenant schemas
-- Custom Alembic environment supports tenant-specific migrations
-- `apply_tenant_migrations.py` script applies migrations to all tenant schemas
-
-## Usage
-
-### Setting Tenant Context
-
-The tenant context is automatically set by the middleware based on:
-1. The `X-Tenant-ID` header
-2. The tenant ID in the URL path (e.g., `/tenants/{tenant_id}/...`)
-
-### Database Operations
-
-Use the `DatabaseConnection` class for database operations:
-
-```python
-from app.database.connection import DatabaseConnection
-
-# The tenant context is automatically determined from the current request
-async def get_user(user_id: str):
-    return await DatabaseConnection.fetchrow(
-        "SELECT * FROM users WHERE user_id = $1",
-        user_id
-    )
-
-# Or explicitly specify a tenant ID
-async def get_user_for_tenant(user_id: str, tenant_id: str):
-    return await DatabaseConnection.fetchrow(
-        "SELECT * FROM users WHERE user_id = $1",
-        user_id,
-        tenant_id=tenant_id
-    )
+- Purpose : Pydantic schemas for API request/response validation
+- Key Schemas :
+  - TenantCreate : For creating new tenants
+  - TenantUpdate : For updating existing tenants
+  - TenantInDB : Database representation
+  - BatchTenantCreate : For batch operations
+  - TenantProvisionResponse : Provisioning results
+## 🔄 How They Work Together
+### Tenant Creation Flow:
+### Authentication Flow:
+### Batch Operations Flow:
+## 🎯 Key Concepts
+### 1. Schema Isolation
+- Each tenant gets a dedicated PostgreSQL schema (e.g., tenant_church_abc )
+- All tenant data lives in their schema
+- Public schema only contains the tenant registry
+### 2. Provisioning States
+- Not Provisioned : Tenant exists but no schema
+- Schema Created : Schema exists but no migrations
+- Fully Provisioned : Schema + migrations + initial data
+### 3. API Key Management
+- Each tenant gets a unique API key
+- Used for service-to-service authentication
+- Stored securely in the tenant registry
+### 4. Migration Management
+- Alembic migrations run per-tenant schema
+- Each tenant can be on different migration versions
+- Supports rollback and targeted migrations
+## 🚀 Usage Examples
+### Create a Single Tenant:
+### Batch Create Tenants:
+### Authenticate User in Tenant Context:
 ```
+from app.services.external_auth_service import ExternalAuthService
 
-### Creating a New Tenant
+# Initialize with tenant schema
+auth_service = AuthService(db_session, 
+"tenant_stmarys_church")
 
-Use the `TenantManager` to create a new tenant:
-
-```python
-from app.database.tenant_management import TenantManager
-
-async def create_new_tenant(tenant_data):
-    tenant_manager = TenantManager(database)
-    tenant_id = await tenant_manager.create_tenant(tenant_data)
-    return tenant_id
+# Authenticate user within tenant
+user = await auth_service.authenticate_user("user@stmarys.
+church", "password")
 ```
-
-## Security Considerations
-
-1. Always validate tenant access - ensure users can only access their own tenant's data
-2. Include tenant_id in tables as an additional security measure
-3. Use the tenant context middleware to ensure proper isolation
-4. Validate tenant IDs before using them in database operations
-
-## Performance Considerations
-
-1. Connection pooling is maintained for performance
-2. Schema switching has minimal overhead
-3. Indexes should be created within each tenant schema as needed
-4. Consider using a read replica for heavy reporting queries
-
-## Migration Considerations
-
-When adding new tables or modifying existing ones:
-
-1. Update the schema creation in `TenantManager._create_tenant_schema`
-2. Create a migration script to update existing tenant schemas
-3. Test thoroughly with multiple tenant schemas
-
-## Conclusion
-
-This multi-tenant schema approach provides strong data isolation with minimal overhead, allowing the application to scale to many tenants while maintaining security and performance.
+## 🔧 Configuration & Settings
+### Tenant Provisioning Config:
+- max_concurrent_operations : Parallel processing limit
+- operation_timeout_seconds : Timeout for operations
+- retry_attempts : Number of retries on failure
+- enable_rollback : Rollback on failure
+### Schema Naming Convention:
+- Format: tenant_{sanitized_domain}
+- Example: stmarys.church → tenant_stmarys_church

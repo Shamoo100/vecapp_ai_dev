@@ -17,7 +17,9 @@ class PromptLibrary:
         Provide insights on:
         1. Key interests and needs
         2. Potential engagement opportunities
-        3. Recommended follow-up actions"""
+        3. Sentiment based on feedback on visitor form
+        4. Recommended follow-up actions
+        """
     )
     
     # Volunteer Matching Prompts

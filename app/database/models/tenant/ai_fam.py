@@ -18,8 +18,8 @@ class AIFam(Base, TimestampMixin, SchemaConfigMixin):
     family_head = Column(UUID, nullable=True)  # Link to family head person
     family_size = Column(Integer, nullable=True)  # Number of family members
 
-    # Relationship without cascade
-    family_members = relationship("AIPerson", back_populates="family", viewonly=True)
+    # Remove the problematic relationship
+    # family_members = relationship("AIPerson", back_populates="family", viewonly=True)  # REMOVED
 
     
     def __repr__(self):

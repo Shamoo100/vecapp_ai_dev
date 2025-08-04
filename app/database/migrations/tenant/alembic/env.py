@@ -23,13 +23,15 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 logger = logging.getLogger('alembic.env')
+
 # Import ONLY tenant schema models
 try:
     from app.database.models.tenant import (
         Base, AIPerson, AIFam, AINotes, AITask, Tenant,
         DecisionAudit, AIFeedback, AIRecommendationLog, 
-        SuppressionLog, Report
+        SuppressionLog, Report, Auth, UserType, UserStatus, AIAuditLog
     )
+    logger.info(f"Successfully imported tenant models: {list(Base.metadata.tables.keys())}")
 except ImportError as e:
     print(f"Import error: {e}")
     import traceback
@@ -47,6 +49,40 @@ def get_tenant_schema():
         raise ValueError("TENANT_SCHEMA environment variable must be set for tenant migrations")
     return tenant_schema
 
+def include_object_filter(obj, name, type_, reflected, compare_to):
+    """
+    Filter function to determine which objects should be included in migrations.
+    
+    Excludes:
+    - Alembic internal tables (alembic_version)
+    - Tables from other schemas (unless schema-agnostic)
+    - Comment-only changes
+    """
+    # Always exclude Alembic's internal tables
+    if type_ == "table" and name in ["alembic_version"]:
+        return False
+    
+    # For tables, only include those in target schema or schema-agnostic
+    if type_ == "table":
+        tenant_schema = get_tenant_schema()
+        return obj.schema == tenant_schema or obj.schema is None
+    
+    # Include all other object types (indexes, constraints, etc.)
+    return True
+
+def compare_type_filter(context, inspected_column, metadata_column, inspected_type, metadata_type):
+    """
+    Custom type comparison to ignore comment-only changes.
+    """
+    # If only the comment differs, don't consider it a change
+    if hasattr(inspected_column, 'comment') and hasattr(metadata_column, 'comment'):
+        if (inspected_column.comment != metadata_column.comment and 
+            str(inspected_type) == str(metadata_type)):
+            return False
+    
+    # Use default comparison for actual type changes
+    return None
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode for tenant schema."""
     url = config.get_main_option("sqlalchemy.url")
@@ -60,9 +96,10 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         version_table_schema=tenant_schema,
-        include_schemas=True,
-        compare_type=True,
+        include_schemas=False,  # CRITICAL: Don't scan other schemas
+        compare_type=compare_type_filter,
         compare_server_default=True,
+        include_object=include_object_filter
     )
 
     with context.begin_transaction():
@@ -91,9 +128,11 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             version_table_schema=tenant_schema,
-            include_schemas=True,
-            compare_type=True,
+            include_schemas=False,  # CRITICAL: Don't scan other schemas
+            compare_type=compare_type_filter,
+            render_as_batch=True,
             compare_server_default=True,
+            include_object=include_object_filter
         )
 
         with context.begin_transaction():

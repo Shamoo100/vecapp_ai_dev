@@ -39,6 +39,7 @@ class AITask(Base, TimestampMixin, AIProcessingMixin, SchemaConfigMixin):  # ADD
     # Relationships
     person = relationship("AIPerson", back_populates="ai_tasks")
     ai_notes = relationship("AINotes", back_populates="task", cascade="all, delete-orphan")
+    ai_recommendation_logs = relationship("AIRecommendationLog", back_populates="ai_task")
     
     def __repr__(self):
         return f"<AITask(id={self.id}, title='{self.task_title}', ai_agent='{self.ai_agent_type}', status='{self.task_status}')>"

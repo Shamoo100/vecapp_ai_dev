@@ -1,15 +1,23 @@
 from sqlalchemy import Column, DateTime, func, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from datetime import datetime
-from typing import Any, Optional
-import os
+from app.config.settings import get_settings
+
+settings = get_settings()
+
+
+# Create engine using DATABASE_URL from settings
+engine = create_engine(settings.DATABASE_URL)
+
+# Create session factory
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 # Create a base class for declarative models
 Base = declarative_base()
 
 # Schema configuration - can be set via environment variable or parameter
-DEFAULT_SCHEMA = os.getenv('DB_SCHEMA', 'public')
+DEFAULT_SCHEMA = settings.DB_SCHEMA or 'public'
 
 class SchemaConfigMixin:
     """Mixin to provide schema configuration for models."""
@@ -24,8 +32,9 @@ class SchemaConfigMixin:
         Returns:
             dict: Table args dictionary with schema configuration.
         """
-        schema_name = schema or DEFAULT_SCHEMA
-        return {'schema': schema_name}
+        if schema:
+            return {'schema': schema}
+        return {}
     
     @classmethod
     def get_table_args_with_schema(cls, schema: str = None, additional_args: tuple = None) -> tuple:
@@ -43,7 +52,7 @@ class SchemaConfigMixin:
         if additional_args:
             return additional_args + (schema_dict,)
         else:
-            return (schema_dict,)
+            return (schema_dict,) if schema_dict else ()
     
     @classmethod
     def configure_schema(cls, schema: str = None):
@@ -57,10 +66,14 @@ class SchemaConfigMixin:
         
         if existing_args is None:
             # No existing args, just set schema
-            cls.__table_args__ = cls.set_schema(schema)
+            if schema:
+                cls.__table_args__ = cls.set_schema(schema)
         elif isinstance(existing_args, dict):
             # Existing args is a dict, update schema
-            existing_args['schema'] = schema or DEFAULT_SCHEMA
+            if schema:
+                existing_args['schema'] = schema
+            else:
+                existing_args.pop('schema', None)
         elif isinstance(existing_args, tuple):
             # Existing args is a tuple, need to reconstruct
             # Find the schema dict and update it, or add it
@@ -69,24 +82,18 @@ class SchemaConfigMixin:
             
             for i, arg in enumerate(args_list):
                 if isinstance(arg, dict) and 'schema' in arg:
-                    args_list[i]['schema'] = schema or DEFAULT_SCHEMA
+                    if schema:
+                        args_list[i]['schema'] = schema
+                    else:
+                        args_list.pop(i)
                     schema_dict_found = True
                     break
             
-            if not schema_dict_found:
+            if not schema_dict_found and schema:
                 # Add schema dict to the end
                 args_list.append(cls.set_schema(schema))
             
             cls.__table_args__ = tuple(args_list)
-
-# Get database connection details from environment variables
-DATABASE_URL = os.getenv('DATABASE_URL')
-
-# Create engine using environment variables
-engine = create_engine(DATABASE_URL)
-
-# Create session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Dependency to get DB session
 def get_db():

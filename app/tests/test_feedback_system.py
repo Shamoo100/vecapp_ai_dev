@@ -183,7 +183,7 @@ class TestFeedbackSystem:
                 helpfulness="yes" if i % 2 == 0 else "no"
             )
             
-            client.post("/api/v1/feedback/submit", json=feedback_request.dict())
+            client.post("/api/v1/feedback/submit", json=feedback_request.model_dump())
         
         # Get feedback by admin
         response = client.get(
@@ -224,7 +224,7 @@ class TestFeedbackSystem:
                 helpfulness=helpfulness
             )
             
-            client.post("/api/v1/feedback/submit", json=feedback_request.dict())
+            client.post("/api/v1/feedback/submit", json=feedback_request.model_dump())
         
         # Get stats
         response = client.get(f"/api/v1/feedback/stats?tenant_id={self.tenant_id}")

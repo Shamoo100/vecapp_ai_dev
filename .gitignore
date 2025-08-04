@@ -74,6 +74,8 @@ docker-compose.override.yml
 *.db
 *.sqlite3
 local_settings.py
+app/tests/
+docs/
 
 # Secrets
 *.pem
