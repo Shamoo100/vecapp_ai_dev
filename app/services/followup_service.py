@@ -412,6 +412,7 @@ class FollowupService:
     async def _save_to_ai_notes_table(
         self,
         event_data: VisitorEventData,
+        visitor_context: VisitorContextData,
         ai_note: AIGeneratedNoteStructure,
         saved_note: dict,
         schema_name: str

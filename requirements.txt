@@ -30,6 +30,7 @@ redis>=4.5.5,<5.0.0
 boto3==1.34.162
 
 # === AI/ML ===
+google-genai==1.28.0
 openai==1.12.0
 numpy==1.26.4
 scikit-learn==1.4.0

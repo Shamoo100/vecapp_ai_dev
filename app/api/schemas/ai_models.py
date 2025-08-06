@@ -1,8 +1,11 @@
-from pydantic import BaseModel, Field, UUID4, IPvAnyAddress
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date
+from uuid import UUID
 
-# AI Person Schemas
+from pydantic import BaseModel, Field, UUID4, IPvAnyAddress
+
+# --- AI Person Schemas ---
+
 class AIPersonBase(BaseModel):
     """Base schema for AI Person"""
     first_name: Optional[str] = None
@@ -41,11 +44,12 @@ class AIPersonResponse(AIPersonBase):
     last_ai_processed_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
-# AI Notes Schemas
+# --- AI Notes Schemas ---
+
 class AINotesBase(BaseModel):
     """Base schema for AI Notes"""
     title: Optional[str] = None
@@ -72,11 +76,12 @@ class AINotesResponse(AINotesBase):
     is_archived: bool
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
-# AI Task Schemas
+# --- AI Task Schemas ---
+
 class AITaskBase(BaseModel):
     """Base schema for AI Task"""
     task_title: Optional[str] = None
@@ -104,8 +109,10 @@ class AITaskResponse(AITaskBase):
     created_at: datetime
     updated_at: datetime
 
-# AI Audit Log Schemas
+# --- AI Audit Log Schema ---
+
 class AIAuditLog(BaseModel):
+    """Schema for AI audit logging"""
     id: Optional[int] = Field(None, description="Primary key ID")
     user_id: UUID = Field(..., description="User ID from X-auth-user header")
     user_email: str = Field(..., description="User email for readability")
@@ -123,6 +130,5 @@ class AIAuditLog(BaseModel):
     timestamp: datetime = Field(..., description="When the action occurred")
     duration_ms: Optional[str] = Field(None, description="Request duration in milliseconds")
 
-    
     class Config:
         from_attributes = True
