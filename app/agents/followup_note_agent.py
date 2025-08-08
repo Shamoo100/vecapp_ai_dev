@@ -5,6 +5,7 @@ import json
 import asyncio
 import os
 import logging
+from typing import Union
 from dotenv import load_dotenv
 from google import genai
 from .base_agent import BaseAgent
@@ -84,7 +85,7 @@ class FollowupNoteAgent(BaseAgent):
         except Exception as e:
             logger.error(f"Error processing visitor data: {e}")
             raise
-    
+        
     async def generate_comprehensive_note(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
         """
         Generate a comprehensive follow-up note by analyzing multiple aspects of visitor data.
@@ -889,8 +890,8 @@ class FollowupNoteAgent(BaseAgent):
         self,
         church_integration_recs: list,
         event_engagement_recs: list,
-        personal_needs_response: dict | None,
-        feedback_insight: dict | None
+        personal_needs_response: Union[dict, None],
+        feedback_insight: Union[dict, None]
     ) -> dict:
         """Format recommended next steps for service consumption."""
 
