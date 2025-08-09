@@ -2,8 +2,9 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 import logging
 
-from agents.base_agent import BaseAgent
-from core.auth import get_current_user
+from app.agents.base_agent import BaseAgent
+from app.agents.followup_note_agent import FollowupNoteAgent
+from app.security.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +14,15 @@ class FollowupSummaryAgent(BaseAgent):
     Generates comprehensive reports based on visitor data from the Church Management System.
     """
     
-    def __init__(self, agent_id: str, schema: str):
+    def __init__(self, agent_id: str = "followup_summary", schema: str = "default", message_queue=None):
         super().__init__(agent_id, schema)
+        self.message_queue = message_queue
+        # Initialize the FollowupNoteAgent for consistent note generation
+        self.note_agent = FollowupNoteAgent(
+            agent_id=f"{agent_id}_note_generator",
+            schema=schema,
+            message_queue=message_queue
+        )
     
     async def generate_followup_summary(self, date_range: Dict[str, datetime]) -> Dict[str, Any]:
         """
@@ -142,30 +150,32 @@ class FollowupSummaryAgent(BaseAgent):
 
     async def generate_followup_note(self, visitor_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Generate a follow-up note for a new visitor based on provided data.
+        Generate a follow-up note for a new visitor using the FollowupNoteAgent for consistency.
 
         Args:
             visitor_data: Dictionary containing visitor information and context
 
         Returns:
-            Dictionary containing the follow-up note details
+            Dictionary containing the follow-up note details with AI-generated content
         """
-        logger.info(f"Generating follow-up note for visitor {visitor_data['Visitor']}")
+        try:
+            person_name = f"{visitor_data.get('first_name', '')} {visitor_data.get('last_name', '')}".strip()
+            logger.info(f"Delegating follow-up note generation for visitor {person_name} to FollowupNoteAgent")
 
-        # Example structure for the follow-up note
-        followup_note = {
-            "Visitor": visitor_data.get("Visitor"),
-            "Family ID": visitor_data.get("Family ID"),
-            "Primary Interests": visitor_data.get("Primary Interests"),
-            "Special Requests": visitor_data.get("Special Requests"),
-            "Sentiment": visitor_data.get("Sentiment"),
-            "Recommended Actions": [
-                "Schedule intro call with Pastor Sarah",
-                "Send childcare facility details",
-                "Invite to Wednesday study group"
-            ],
-            "Created": datetime.now().strftime("%B %d, %Y at %I:%M %p"),
-            "AI-Generated": True
-        }
-
-        return followup_note
+            # Delegate to the FollowupNoteAgent for consistent note generation
+            followup_note = await self.note_agent.generate_followup_note(visitor_data)
+            
+            logger.info(f"Follow-up note generated successfully for {person_name} via FollowupNoteAgent")
+            return followup_note
+            
+        except Exception as e:
+            logger.error(f"Error generating follow-up note via FollowupNoteAgent: {str(e)}")
+            # Return a basic note structure in case of error
+            return {
+                "note": f"Follow-up needed for {visitor_data.get('first_name', 'visitor')} {visitor_data.get('last_name', '')}. Please review task details and contact appropriately.",
+                "person_id": visitor_data.get("person_id"),
+                "confidence_score": 0.3,
+                "generated_at": datetime.utcnow().isoformat(),
+                "ai_generated": True,
+                "error": str(e)
+            }

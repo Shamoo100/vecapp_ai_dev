@@ -1,6 +1,6 @@
 from typing import Dict, Any
-from .base_agent import BaseAgent
-from core.messaging import MessageQueue
+from app.agents.base_agent import BaseAgent
+from app.core.messaging import MessageQueue
 import tensorflow as tf
 import numpy as np
 
@@ -46,6 +46,8 @@ class SpecialistAgent(BaseAgent):
         except Exception as e:
             self.log_activity(f"Error in specialist processing: {str(e)}", "error")
             raise
+
+    #def _sentiment_analysis(self, )
 
     def _load_classification_model(self, model_path: str) -> tf.keras.Model:
         """Load the TensorFlow classification model"""

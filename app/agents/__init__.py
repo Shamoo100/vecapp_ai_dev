@@ -2,24 +2,16 @@
 from typing import Dict, Any, Type
 from .base_agent import BaseAgent
 from .data_collection_agent import DataCollectionAgent
-from .volunteer_coordination_agent import VolunteerCoordinationAgent
-from .evaluation_agent import EvaluationAgent
-from .feedback_loop_agent import FeedbackLoopAgent
 from .followup_summary_agent import FollowupSummaryAgent
-from .generative_agent import GenerativeAgent
-from .specialist_agent import SpecialistAgent
+from .followup_note_agent import FollowupNoteAgent
 
 class AgentFactory:
     """Factory class for creating and managing agent instances."""
     
     _agent_types: Dict[str, Type[BaseAgent]] = {
         'data_collection': DataCollectionAgent,
-        'volunteer_coordination': VolunteerCoordinationAgent,
-        'evaluation': EvaluationAgent,
-        'feedback_loop': FeedbackLoopAgent,
         'followup_summary': FollowupSummaryAgent,
-        'generative': GenerativeAgent,
-        'specialist': SpecialistAgent
+        'followup_note': FollowupNoteAgent,
     }
     
     @classmethod

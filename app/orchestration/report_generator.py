@@ -6,7 +6,6 @@ from langchain.chains import LLMChain
 from langchain.chat_models import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.schema import Document
-from langchain.retrievers import TenantAwareRetriever
 from langchain.prompts import PromptTemplate
 from langchain.prompts.chat import (
     ChatPromptTemplate,
@@ -16,13 +15,13 @@ from langchain.prompts.chat import (
 from langchain.output_parsers import PydanticOutputParser
 from langchain_core.messages import SystemMessage, HumanMessage
 import langsmith
-from langchain.smith import RunEvaluator
+#from langchain.smith import RunEvaluator
 from langgraph.graph import Graph
 
 from app.data.data_fetcher import DataFetcher
-from app.data.report_repository import ReportRepository
+from app.data.report_repository2 import ReportRepository
 from app.data.storage import S3Storage
-from app.models.report import ReportStatus
+from app.api.schemas.report import ReportStatus
 from app.utils.pdf_generator import PDFGenerator
 from app.security.token_service import TokenService
 from app.config.settings import get_settings
@@ -42,6 +41,7 @@ class ReportGenerator:
         self.pdf_generator = PDFGenerator()
         self.token_service = TokenService()
         self.prompts = PromptLibrary.get_prompts()
+        self.service_auth = ServiceAuthClient()  # or TokenService()
     
     async def generate_report(
         self,
@@ -64,11 +64,15 @@ class ReportGenerator:
             system_token = self.token_service.generate_system_token(tenant_id)
             
             # Fetch data from required services
+            # Get service token for inter-service calls
+            service_token = await self.service_auth.get_service_token(str(tenant_id))
+            
+            # Use token for data fetching
             followup_data = await self.data_fetcher.fetch_followup_data(
                 tenant_id=tenant_id,
                 start_date=start_date,
                 end_date=end_date,
-                auth_token=system_token
+                auth_token=service_token
             )
             
             analytics_data = await self.data_fetcher.fetch_analytics_data(

@@ -1,41 +1,36 @@
-🚀 AI Coding Rules for FastAPI + LangChain Codebase
-🧹 General Code Style
-Follow PEP8 standards (formatting, naming, etc).
+Here’s the cleaned-up and professionally structured version of your **AI Coding Rules for FastAPI + LangChain Codebase**, integrating best practices from your current folder structure, conventions, and team guidelines:
 
-Use type hints for all functions and class methods.
+---
 
-Write docstrings for every public class, method, and function.
+# 🚀 AI Coding Standards for VecApp (FastAPI + LangChain)
 
-Prefer 88 characters max per line (good for readability and Black formatter).
+## 🧹 General Code Style
 
-Use snake_case for functions and variables.
+* Follow **PEP8** and use **Black** for formatting (88-character line length preferred).
+* Always use **type hints** on function signatures.
+* Add **docstrings** to all public classes, functions, and methods.
+* Use `snake_case` for variables and functions; `PascalCase` for class names.
+* Prefer **f-strings** (`f"{name}"`) over `.format()` or `%` formatting.
+* Use **async/await** where appropriate — especially for I/O, DB, and LLM calls.
 
-Use PascalCase for class names.
+---
 
-Prefer f-strings over .format() or % formatting.
+## 🛡️ FastAPI API Design
 
-🛡️ API Design (FastAPI)
-Every API endpoint must have:
+### ✅ Required for Every Endpoint:
 
-Request model (pydantic.BaseModel)
+* A **Pydantic Request Model** (`BaseModel`).
+* A **Pydantic Response Model**.
+* Input validation must be enforced in the model layer, not in the business logic.
+* Use:
 
-Response model (pydantic.BaseModel)
+  * `summary` and `description` in route decorators.
+  * Proper `response_model` declaration.
+* All exceptions must use FastAPI's built-in handlers (e.g., `HTTPException`).
 
-Validation at input level, not inside business logic.
+### 🔍 Example:
 
-Always document the endpoint with:
-
-A summary
-
-A description
-
-Handle all exceptions using FastAPI exception handlers.
-
-Example:
-
-python
-Copy
-Edit
+```python
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -50,60 +45,102 @@ class UserResponse(BaseModel):
     name: str
     age: int
 
-@router.post("/users", response_model=UserResponse, summary="Create User", description="Creates a new user.")
+@router.post(
+    "/users",
+    response_model=UserResponse,
+    summary="Create User",
+    description="Creates a new user."
+)
 async def create_user(user: UserRequest):
     if user.age < 0:
         raise HTTPException(status_code=400, detail="Age must be positive.")
     return UserResponse(id=1, name=user.name, age=user.age)
-🧠 AI/ML (LangChain, LangSmith, Langflow)
-Prompt templates must be version-controlled and kept modular.
+```
 
-Always define chains and tools with explicit inputs/outputs.
+---
 
-Use async LangChain functions wherever possible.
+## 🧠 AI/ML Integration (LangChain / LangSmith / Langflow)
 
-Log important steps using LangSmith if observability is enabled.
+* Prompt templates must be:
 
-Keep large LLM calls in a services/ or llm/ folder, not mixed inside API routes.
+  * **Version-controlled**
+  * **Modular and reusable**
+* Define all **Chains and Tools** with **explicit input/output schemas**.
+* Prefer **async LangChain** integrations for LLM calls.
+* Log key steps using **LangSmith** (when observability is enabled).
+* Place all LLM chains/tools in `llm/` or `services/llm_service.py`; never inline in `api/routes`.
 
-🔥 Database (Postgres, Asyncpg, SQLAlchemy)
-All DB operations must be async.
+---
 
-Separate DB models, schemas (Pydantic), and CRUD operations into separate files.
+## 🔥 Database Layer (Postgres, SQLAlchemy, AsyncPG)
 
-Migrations should only be done through Alembic.
+* All DB interactions must be **async**.
+* Follow separation of concerns:
 
-Connection pool management should happen in db.py or database.py.
+  * `models/` – SQLAlchemy models
+  * `schemas/` – Pydantic schemas (for API)
+  * `repositories/` – DB access layer
+* Manage DB connections in a centralized `database.py` or `db.py`.
+* All migrations must go through Alembic, using:
 
-🔒 Security
-Always use OAuth2 / JWT tokens for protected endpoints.
+  * `app/database/migrations/public/`
+  * `app/database/migrations/tenant/`
+* ❌ Do not use or place files in the legacy `/migrations/` folder at root.
 
-Hash all sensitive data (e.g., passwords) using bcrypt.
+---
 
-Never expose secrets or keys in logs.
+## 🔒 Security
 
-📂 Project Structure Best Practice
-bash
-Copy
-Edit
-/app
-    /api
-    /core
-    /db
-    /llm
-    /models
-    /schemas
-    /services
-    main.py
-✨ Bonus Best Practices
-Use dotenv for environment variables.
+* Use **OAuth2 / JWT** for protecting endpoints.
+* Always hash passwords and sensitive data using `bcrypt`.
+* Never log secrets, tokens, or credentials.
+* Enforce **RBAC** (role-based access control) at the API and database levels.
 
-Always add basic rate limiting and CORS setup on FastAPI.
+---
 
-Write unit tests for:
+## 📂 Folder & File Structure Guidelines
 
-API routes
+### ✅ Placement Rules
 
-Services
+| Type                      | Path                         | Example File                                |
+| ------------------------- | ---------------------------- | ------------------------------------------- |
+| FastAPI routes            | `app/api/routes/`            | `visitor.py`, `feedback.py`                 |
+| Pydantic schemas          | `app/api/schemas/`           | `visitor.py`, `notes.py`                    |
+| LangChain agents          | `app/agents/`                | `followup_note_agent.py`                    |
+| LLM prompt/chains         | `llm/`                       | `prompts.py`, `chains.py`                   |
+| Services / business logic | `app/services/`              | `langchain_service.py`, `report_service.py` |
+| DB models                 | `app/database/models/`       | `visitor.py`, `feedback.py`                 |
+| DB migrations             | `app/database/migrations/`   | `tenant/`, `public/`                        |
+| DB repositories           | `app/database/repositories/` | `visitor_repository.py`                     |
+| Caching                   | `app/data/cache/`            | `repository_cache.py`                       |
+| Event handling            | `app/data/events/`           | `visitor_event_listener.py`                 |
+| Testing                   | `tests/` or `app/tests/`     | `test_followup_api.py`                      |
+| Documentation             | `docs/`                      | `FOLLOWUP_NOTES_README.md`                  |
+| Infra / deployment        | `infra/`, `deployments/`     | `k8s-local/`, `vecapp-ai-depl.yaml`         |
 
-LLM Chains
+### ❌ Avoid:
+
+* Placing **app logic in root** (outside `/app/`)
+* Storing migration files in root `/migrations/`
+* Writing **raw SQL in route handlers** (use repository pattern)
+
+---
+
+## ✨ Engineering Best Practices
+
+* Use **dotenv** for managing secrets and environment configuration.
+* Set up **rate limiting and CORS policies** for all production APIs.
+* All long-running or task-heavy logic should go through **background tasks** or **worker queues (e.g., Celery, AWS SQS)**.
+
+---
+
+## 🧪 Testing Requirements
+
+* Write tests for:
+
+  * API routes (`app/tests/test_*.py`)
+  * LangChain agents and chains
+  * Services and repositories
+* Use **Pytest** + **Async fixtures**
+* Target code coverage ≥ 90% on all critical paths.
+

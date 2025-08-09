@@ -22,6 +22,7 @@ wheels/
 MANIFEST
 
 # Virtual Environment
+vecapvenv/
 venv/
 env/
 ENV/
@@ -31,6 +32,7 @@ env.bak/
 venv.bak/
 
 # IDE
+.trae/
 .idea/
 .vscode/
 *.swp
@@ -72,6 +74,8 @@ docker-compose.override.yml
 *.db
 *.sqlite3
 local_settings.py
+app/tests/
+docs/
 
 # Secrets
 *.pem

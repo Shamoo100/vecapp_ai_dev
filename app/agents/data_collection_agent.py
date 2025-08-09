@@ -1,12 +1,11 @@
 from typing import Dict, Any
 from app.agents.base_agent import BaseAgent
-from app.database.connection import Database
-from app.models.visitor import Visitor
-
+from app.database.repositories.connection import DatabaseConnection
+from app.api.schemas.ai_models import AIPersonBase
 class DataCollectionAgent(BaseAgent):
-    def __init__(self, agent_id: str, schema: str, database: Database):
+    def __init__(self, agent_id: str, schema: str):
         super().__init__(agent_id, schema)
-        self.database = database
+        self.db_connection = DatabaseConnection
 
     async def process(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Process visitor data"""
@@ -15,7 +14,7 @@ class DataCollectionAgent(BaseAgent):
             self._validate_visitor_data(data)
             
             # Create visitor object
-            visitor = Visitor(
+            visitor = AIPersonBase(
                 schema=self.schema,
                 first_name=data['first_name'],
                 last_name=data['last_name'],

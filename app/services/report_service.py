@@ -4,7 +4,7 @@ import logging
 import uuid
 
 from app.security.auth import get_current_user
-from app.database.tenant_management import get_tenant_by_id
+
 
 logger = logging.getLogger(__name__)
 
