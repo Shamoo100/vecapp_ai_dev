@@ -9,6 +9,3 @@ api_router = APIRouter(prefix="/api")
 # Include versioned routers
 api_router.include_router(v1_router)
 # api_router.include_router(v2_router)  # Future version
-
-# Remove duplicate endpoints that exist in individual route files
-# Keep only if they provide different functionality

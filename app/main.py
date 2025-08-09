@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
-from app.api.routes.v1 import v1_router
+from app.api.api import api_router
 from app.security.api_key import verify_api_key
 from app.database.repositories.connection import DatabaseConnection
 from dotenv import load_dotenv
@@ -74,7 +74,7 @@ app = FastAPI(
 )
 
 setup_middleware(app)
-app.include_router(v1_router, prefix="/api")
+app.include_router(api_router)
 
 limiter.key_func = get_identifier
 

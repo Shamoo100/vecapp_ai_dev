@@ -51,7 +51,7 @@ from app.security.auth import (
 from app.security.api_key import verify_api_key
 
 # Initialize router
-router = APIRouter()
+router = APIRouter(prefix="/tenants", tags=["Tenants"])
 
 # Initialize service
 tenant_service = TenantProvisioningService()
