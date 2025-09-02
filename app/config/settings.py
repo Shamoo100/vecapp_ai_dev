@@ -49,12 +49,23 @@ class Settings(BaseSettings):
     
     # Secret key
     SECRET_KEY: str = Field("your_app_secret_key", description="Secret key for the application")
+
     
-    # OpenAI API settings
-    OPENAI_API_KEY: str = Field(..., description="API key for OpenAI")
+    # Enhanced LLM Provider settings
+    GOOGLE_API_KEY: Optional[str] = Field(None, description="API key for Google Gemini")
+    OPENAI_API_KEY: Optional[str] = Field(None, description="API key for OpenAI")
+    CLAUDE_API_KEY: Optional[str] = Field(None, description="API key for Anthropic Claude")
     
-    # Google API settings
-    GEMINI_API_KEY: str = Field(..., description="API key for Google Gemini")
+    # LLM Provider Priority (comma-separated list)
+    LLM_PROVIDER_PRIORITY: str = Field("gemini,openai", description="Priority order for LLM providers")
+    
+    # LLM Fallback settings
+    LLM_MAX_RETRIES: int = Field(3, description="Maximum retries per LLM provider")
+    LLM_RETRY_DELAY: float = Field(1.0, description="Delay between LLM retries in seconds")
+    
+    # Model configurations
+    GEMINI_MODEL: str = Field("gemini-2.5-flash", description="Default Gemini model")
+    OPENAI_MODEL: str = Field("gpt-4o-mini", description="Default OpenAI model")
     
     # AWS Settings
     AWS_ACCESS_KEY_ID: Optional[str] = Field(None, description="AWS access key ID")

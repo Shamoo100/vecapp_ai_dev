@@ -9,7 +9,7 @@ from .tenant import Tenant
 from .decision_audit import DecisionAudit
 from .feedback import AIFeedback
 from .recommendation_log import AIRecommendationLog
-from .suppression_log import SuppressionLog
+from .suppression_log import AISuppressionLog
 from .reports import Report
 from .auth import Auth
 from .user_type import UserType
@@ -20,5 +20,5 @@ __all__ = [
     'Base', 'TimestampMixin', 'SchemaConfigMixin',
     'AIPerson', 'AIFam', 'AINotes', 'AITask', 'Tenant',
     'DecisionAudit', 'AIFeedback', 'AIRecommendationLog', 
-    'SuppressionLog', 'Report', 'Auth', 'UserType', 'UserStatus', 'AIAuditLog'
+    'AISuppressionLog', 'Report', 'Auth', 'UserType', 'UserStatus', 'AIAuditLog'
 ]

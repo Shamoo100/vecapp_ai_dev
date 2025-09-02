@@ -1,22 +1,33 @@
 """
 Consolidated Follow-up Routes for VecApp AI Service.
 
-This module provides two main endpoints:
+This module provides three main endpoints:
 1. Internal follow-up note generation (event-driven processing)
 2. Feedback submission for AI-generated notes
+3. Visitor snapshot generation with AI summaries
 
 Simplified and consolidated from multiple route files for better maintainability.
 """
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import Header, APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 import logging
 import time
-
+from app.security.dependencies import get_current_schema_name, get_current_tenant
 from app.services.followup_service import FollowupService
-from app.api.schemas.event_schemas import VisitorEventData, AINoteFeedback
-from app.security.dependencies import get_current_tenant
-from fastapi import Body
+from app.services.journey_report_service import JourneyReportService
+from app.services.visitor_snapshot_service import VisitorSnapshotService
+from app.api.schemas.event_schemas import VisitorEventData
+from app.api.schemas.feedback import SubmitFeedbackRequest as FeedbackSubmitRequest, FeedbackResponse
+from app.api.schemas.visitor_snapshot import (
+    VisitorSnapshotRequest,
+    VisitorSnapshotResponse,
+    VisitorSummaryEntry
+)
+from app.api.schemas.journey_report import JourneyReportRequest, JourneyReportResponse, VisitorJourneyEntry
+
+
+from fastapi import Body, Header
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/followup", tags=["Follow-up"])
@@ -42,127 +53,10 @@ class InternalFollowupResponse(BaseModel):
     processing_mode: str  # "sync" or "async"
 
 
-class SubmitFeedbackRequest(BaseModel):
-    """Request model for submitting feedback on AI notes."""
-    note_id: str
-    feedback: AINoteFeedback
-
-
-class FeedbackResponse(BaseModel):
-    """Response model for feedback submission."""
-    feedback_id: str
-    status: str
-    note_id: str
-
-
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
-
-@router.post(
-    "/internal/generate",
-    response_model=InternalFollowupResponse,
-    summary="Internal Follow-up Note Generation",
-    description="Generate AI-powered follow-up note for internal event-driven processing. Supports both sync and async modes."
-)
-async def generate_internal_followup_note(
-    request: InternalFollowupRequest,
-    background_tasks: BackgroundTasks,
-    tenant: str = Depends(get_current_tenant)
-) -> InternalFollowupResponse:
-    """
-    Generate an AI-powered visitor follow-up note for internal processing.
-    
-    This endpoint is designed for event-driven processing where:
-    - Events trigger follow-up note generation
-    - Processing can be asynchronous for better performance
-    - Comprehensive data collection from multiple services
-    - Family scenario handling based on event data
-    
-    The system will:
-    1. Analyze the family scenario from event data
-    2. Collect relevant data using the appropriate family methods
-    3. Generate AI-powered insights and recommendations
-    4. Save results to both member service and AI audit databases
-    """
-    try:
-        followup_service = FollowupService(tenant)
-        
-        if request.async_processing:
-            # Process in background for better performance
-            background_tasks.add_task(
-                _process_note_async,
-                followup_service,
-                request.event_data
-            )
-            
-            return InternalFollowupResponse(
-                note_id=f"async_{request.event_data.event_id}_{int(time.time())}",
-                status="processing",
-                confidence_score=None,
-                generation_timestamp=request.event_data.timestamp,
-                processing_mode="async"
-            )
-        else:
-            # Synchronous processing
-            result = await followup_service.generate_enhanced_summary_note(request.event_data)
-            
-            return InternalFollowupResponse(
-                note_id=str(result['note_id']),
-                status="completed",
-                confidence_score=result['ai_note']['confidence_score'],
-                generation_timestamp=result['ai_note']['generation_timestamp'],
-                processing_mode="sync"
-            )
-            
-    except ValueError as e:
-        logger.warning(f"Invalid request for internal note generation: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error generating internal followup note: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to generate followup note")
-
-# ============================================================================
-# MISSING SQS MESSAGE ENDPOINT
-# ============================================================================
-@router.post(
-    "/internal/process-missing",
-    response_model=InternalFollowupResponse,
-    summary="Process Missing SQS Message",
-    description="Synchronously process a missing or failed SQS message by generating the follow-up note and deleting the message from the queue."
-)
-async def process_missing_sqs_message(
-    event_data: VisitorEventData = Body(..., description="Visitor event data"),
-    receipt_handle: str = Body(..., description="SQS receipt handle for message deletion"),
-    tenant: str = Depends(get_current_tenant)
-) -> InternalFollowupResponse:
-    try:
-        followup_service = FollowupService()
-
-        # Build visitor context
-        visitor_context = await followup_service.context_builder.build_context(event_data)
-
-        # Generate note and delete SQS message
-        result = await followup_service.generate_enhanced_summary_note(
-            event_data, visitor_context, receipt_handle=receipt_handle
-        )
-
-        return InternalFollowupResponse(
-            note_id=str(result['note_id']),
-            status="completed",
-            confidence_score=result['ai_note']['confidence_score'],
-            generation_timestamp=result['ai_note']['generation_timestamp'],
-            processing_mode="sync"
-        )
-
-    except Exception as e:
-        logger.error(f"Error processing missing SQS message: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to process missing SQS message")
-
-# ============================================================================
-# FEEDBACK ENDPOINT
-# ============================================================================
-
+#feedback
 @router.post(
     "/feedback",
     response_model=FeedbackResponse,
@@ -170,12 +64,14 @@ async def process_missing_sqs_message(
     description="Submit admin feedback on AI-generated notes for continuous improvement and quality assurance."
 )
 async def submit_note_feedback(
-    request: SubmitFeedbackRequest,
-    tenant: str = Depends(get_current_tenant)
+    request: FeedbackSubmitRequest,  # Use the proper schema
+    tenant: str = Depends(get_current_schema_name),
+    x_request_tenant: str = Header(alias="X-Request-Tenant"),
+    description="Tenant context (schema name)"
 ) -> FeedbackResponse:
     """
     Submit feedback on an AI-generated visitor follow-up note.
-    
+
     This endpoint allows administrators to:
     - Rate the quality and accuracy of AI-generated notes
     - Provide specific feedback on recommendations
@@ -189,16 +85,19 @@ async def submit_note_feedback(
     - Provide quality metrics for administrators
     """
     try:
-        followup_service = FollowupService(tenant)
+        # Initialize service
+        followup_service = FollowupService()
         
+        # Pass pydantic models to service
         result = await followup_service.submit_feedback(
-            request.note_id,
-            request.feedback
+            str(request.note_id),
+            request,
+            tenant=tenant
         )
         
         return FeedbackResponse(
-            feedback_id=result['feedback_id'],
-            status=result['status'],
+            feedback_id=str(result.get('id', 'unknown')),
+            status="submitted",
             note_id=request.note_id
         )
         
@@ -209,6 +108,115 @@ async def submit_note_feedback(
         logger.error(f"Error submitting feedback: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to submit feedback")
 
+#visitor snapshot
+@router.post(
+    "/visitor-snapshots",
+    response_model=VisitorSnapshotResponse,
+    summary="Get Visitor Snapshot Report",
+    description="Retrieve AI-generated visitor snapshots with pagination support for recent church visitors"
+)
+async def get_visitor_snapshots(
+    request: VisitorSnapshotRequest,
+    tenant: str = Depends(get_current_schema_name),
+    x_request_tenant: str = Header(alias="X-Request-Tenant")
+) -> VisitorSnapshotResponse:
+    """
+    Generate AI-powered visitor snapshots with pagination support.
+    
+    This endpoint provides:
+    - Paginated list of recent visitors
+    - AI-generated summaries for each visitor
+    - Family context and sentiment analysis
+    - Contact information and preferences
+    - Engagement recommendations
+    
+    Features:
+    - Date range filtering (defaults to last 90 days)
+    - Configurable page size (1-50 entries)
+    - AI-powered visitor analysis
+    - Family member integration
+    - Sentiment classification
+    
+    Args:
+        request: Pagination and filtering parameters
+        tenant: Current tenant schema name
+        x_request_tenant: Tenant header for validation
+        
+    Returns:
+        VisitorSnapshotResponse with paginated visitor entries
+    """
+    try:
+        # Validate tenant consistency
+        if x_request_tenant != tenant:
+            raise HTTPException(
+                status_code=400, 
+                detail="Tenant mismatch between header and authentication"
+            )
+        
+        # Initialize visitor snapshot service
+        snapshot_service = VisitorSnapshotService(tenant)
+        await snapshot_service.initialize()
+        
+        try:
+            # Generate visitor snapshots
+            result = await snapshot_service.get_visitor_snapshots(
+                request=request,
+                tenant_id=tenant
+            )
+            
+            logger.info(
+                f"Generated {len(result.entries)} visitor snapshots for tenant {tenant}, "
+                f"page {request.page}, total: {result.total_count}"
+            )
+            
+            return result
+            
+        finally:
+            # Ensure service cleanup
+            await snapshot_service.close()
+        
+    except ValueError as e:
+        logger.warning(f"Invalid visitor snapshot request: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error generating visitor snapshots for tenant {tenant}: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to generate visitor snapshots. Please try again later."
+        )
+
+#followup journey report
+
+@router.post(
+    "/journey",
+    response_model=JourneyReportResponse,
+    summary="Generate Follow-Up Journey Report",
+    description="Generate AI-powered follow-up journey report for visitors within date range"
+)
+async def generate_journey_report(
+    request: JourneyReportRequest,
+    tenant: str = Depends(get_current_schema_name),
+    x_request_tenant: str = Header(alias="X-Request-Tenant")
+    
+) -> JourneyReportResponse:
+    """
+        Generate a comprehensive follow-up journey report for visitors within a date range.
+        
+        This endpoint analyzes visitor follow-up journeys, including:
+        - Task completion status and assignees
+        - AI-powered sentiment analysis and decision prediction
+        - Family grouping and engagement metrics
+        - Unresolved needs and recommendations
+        """
+    #validate tenant consistency
+    if x_request_tenant != tenant:
+        raise HTTPException(
+            status_code=400, 
+            detail="Tenant mismatch between header and authentication"
+        )
+    #initialize journey report service
+    service = JourneyReportService(tenant=tenant)
+    return await service.generate_journey_report(request)
 
 # ============================================================================
 # HEALTH CHECK
@@ -221,8 +229,8 @@ async def followup_health_check():
         "status": "healthy",
         "service": "followup-consolidated",
         "endpoints": [
-            "/followup/internal/generate",
-            "/followup/feedback"
+            "/followup/feedback",
+            "/followup/visitor-snapshots"
         ],
         "message": "Consolidated follow-up service is operational"
     }
@@ -246,7 +254,7 @@ async def _process_note_async(
     - Database operations across multiple services
     """
     try:
-        result = await followup_service.generate_enhanced_summary_note(event_data)
+        result = await followup_service.generate_followup_summary_note(event_data)
         logger.info(f"Async note generation completed for event {event_data.event_id}")
         
         # Could trigger notifications, webhooks, or additional processing here

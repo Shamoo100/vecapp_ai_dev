@@ -27,8 +27,8 @@ class VisitorEventListener:
     def __init__(self):
         """Initialize the visitor event listener with required services"""
         self.sqs_client = SQSClient()
-        self.followup_service = FollowupService()
-        self.context_builder = VisitorContextBuilder()
+        #self.followup_service = FollowupService()
+        #self.context_builder = VisitorContextBuilder()
         self.processing_stats = {
             "messages_processed": 0,
             "messages_failed": 0,
@@ -60,7 +60,7 @@ class VisitorEventListener:
             # Process messages in parallel for better performance
             tasks = [self._process_single_message(msg) for msg in messages]
 
-            #TODO: update when there is need for logging
+            #TODO: update when there is need for logging multiple messages for now use list comprehension
             #             tasks = []
             # for msg in messages:
             #     if msg.is_valid():
@@ -102,62 +102,75 @@ class VisitorEventListener:
         Returns:
             bool: True if processing was successful, False otherwise
         """
-        receipt_handle = message.get('receipt_handle')  # Use lowercase key as per sqs_client.py
-        message_id = message.get('message_id', 'unknown')
-        
-        try:
-            # Parse message body
-            message_body_raw = message['body']
-            if isinstance(message_body_raw, dict):
-                message_body = message_body_raw
-            else:
-                message_body = json.loads(message_body_raw)
+        receipt_handle = message.get("receipt_handle")
+        message_id = message.get("message_id", "unknown")
 
+        # --- Phase 1: Parse & setup ---
+        try:
+            message_body_raw = message["body"]
+            message_body = message_body_raw if isinstance(message_body_raw, dict) else json.loads(message_body_raw)
             logger.info(f"Processing message {message_id}")
-            
-            # Validate and parse event data
+
             event_data = self._parse_event_data(message_body)
             if not event_data:
                 logger.error(f"Invalid event data in message {message_id}")
-                await self.sqs_client.delete_message(receipt_handle=receipt_handle, queue_url=self.sqs_client.default_queue_url)
+                # Delete invalid messages to prevent infinite reprocessing
+                if receipt_handle:
+                    await self.sqs_client.delete_message(receipt_handle=receipt_handle, queue_url=self.sqs_client.default_queue_url)
                 return False
-            
-             # Start extending visibility timeout in background
+
+            schema_name = event_data.tenant
+            logger.info(f"Processing message {message_id} for tenant: {schema_name}")
+
+            # Initialize services with proper tenant context
+            followup_service = FollowupService(schema_name=schema_name)
+            context_builder = VisitorContextBuilder(schema_name=schema_name)
+
             extend_task = asyncio.create_task(
                 self._extend_visibility_timeout(
-                    self.sqs_client.sqs,  # boto3 client inside SQSClient
+                    self.sqs_client,  # Pass the SQSClient wrapper, not the raw boto3 client
                     self.sqs_client.default_queue_url,
-                    receipt_handle
+                    receipt_handle,
                 )
             )
-            # Build comprehensive visitor context
-            visitor_context = await self.context_builder.build_context(event_data)
-            
-            # Generate AI follow-up note
-            await self.followup_service.generate_enhanced_summary_note(
-                event_data, visitor_context
-            )
 
-            # Cancel the visibility extension task when done
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in message {message_id}: {str(e)}")
+            # Delete messages with invalid JSON to prevent infinite reprocessing
+            if receipt_handle:
+                await self.sqs_client.delete_message(receipt_handle=receipt_handle, queue_url=self.sqs_client.default_queue_url)
+            return False
+
+        except Exception as e:
+            logger.error(f"Setup error in message {message_id}: {str(e)}")
+            return False
+
+        # --- Phase 2: Process event ---
+        try:
+            visitor_context = await context_builder.build_context(event_data)
+
+            await followup_service.generate_followup_summary_note(event_data, visitor_context)
+
             extend_task.cancel()
             try:
                 await extend_task
             except asyncio.CancelledError:
                 pass
-            
-            # Delete message after successful processing using receipt_handle from raw message
-            await self.sqs_client.delete_message(receipt_handle=receipt_handle, queue_url=self.sqs_client.default_queue_url)
-            
-            logger.info(f"Successfully processed message {message_id} for person {event_data.person_id}")
+
+            # # Delete SQS message only if note generation is successful
+            # if receipt_handle:
+            #     await self.sqs_client.delete_message(receipt_handle=receipt_handle, queue_url=self.sqs_client.default_queue_url)
+            #     logger.info(f"Successfully deleted message {message_id} from queue")
+            # else:
+            #     logger.error(f"Receipt handle is None for message {message_id}")
+
+            logger.info(
+                f"Successfully processed message {message_id} for person {event_data.person_id} in tenant {schema_name}"
+            )
             return True
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in message {message_id}: {str(e)}")
-            await self.sqs_client.delete_message(receipt_handle=receipt_handle, queue_url=self.sqs_client.default_queue_url)
-            return False
-            
+
         except Exception as e:
-            logger.error(f"Error processing message {message_id}: {str(e)}")
+            logger.error(f"Processing error in message {message_id} for tenant {schema_name}: {str(e)}")
             # Don't delete message on processing error - let it retry
             return False
     
@@ -202,7 +215,7 @@ class VisitorEventListener:
         Periodically extend the visibility timeout of a message while processing.
         
         Args:
-            sqs_client: boto3 SQS client
+            sqs_client: SQSClient instance (not boto3 client)
             queue_url: SQS queue URL
             receipt_handle: Message receipt handle
             interval: How often to extend visibility (seconds)
@@ -211,10 +224,11 @@ class VisitorEventListener:
         start_time = time.time()
         while time.time() - start_time < duration:
             try:
-                sqs_client.change_message_visibility(
-                    QueueUrl=queue_url,
-                    ReceiptHandle=receipt_handle,
-                    VisibilityTimeout=60  # Extend by 60 seconds each time
+                # Use the SQS client wrapper method instead of raw boto3
+                await sqs_client.change_message_visibility(
+                    receipt_handle=receipt_handle,
+                    visibility_timeout=60,  # Extend by 60 seconds each time
+                    queue_url=queue_url
                 )
                 logger.debug(f"♻️ Extended visibility timeout for message")
             except Exception as e:

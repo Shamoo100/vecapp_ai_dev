@@ -1,17 +1,13 @@
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import re
 import json
 import asyncio
-import os
 import logging
-from typing import Union
 from dotenv import load_dotenv
-from google import genai
 from .base_agent import BaseAgent
-from app.api.schemas.event_schemas import AIGeneratedNoteStructure, VisitorContextData
+from app.api.schemas.event_schemas import VisitorContextData
 from app.llm.prompts import PromptLibrary
-from langsmith import trace
 
 # Load environment variables
 load_dotenv()
@@ -19,54 +15,37 @@ load_dotenv()
 # Configure logging
 logger = logging.getLogger(__name__)
 
+
+class QualityResult:
+    """Result of quality validation."""
+    def __init__(self, passed: bool, score: float, issues: List[str]):
+        self.passed = passed
+        self.score = score
+        self.issues = issues
+
+
 class FollowupNoteAgent(BaseAgent):
     """
-    AI agent for generating comprehensive visitor follow-up notes using Google Gemini API.
-    Handles visitor profile analysis, sentiment analysis, and recommendation generation.
+    AI agent for generating comprehensive visitor follow-up notes with fallbacks.
     """
-    
+
     def __init__(self, agent_id: str, schema: str):
-        """
-        Initialize the followup note agent.
-        
-        Args:
-            agent_id (str): Unique identifier for this agent instance
-            schema (str): Schema version for data validation
-        """
         super().__init__(agent_id, schema)
         self.prompts = PromptLibrary()
-        self.model = "gemini-2.5-flash"
-        self.temperature = 0.3  # Add temperature control
-        
-        # Initialize Gemini client with API key from environment
-        gemini_api_key = os.getenv("GOOGLE_API_KEY")
-        if not gemini_api_key:
-            raise ValueError("GOOGLE_API_KEY not found in environment variables")
-        
-        try:
-            self.client = genai.Client(api_key=gemini_api_key)
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini client: {e}")
-            raise
+        self.temperature = 0.3
+        logger.info(f"FollowupNoteAgent initialized: {agent_id}")
 
     async def process(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Main processing method that generates comprehensive visitor follow-up notes.
-        
-        Args:
-            data (Dict[str, Any]): Raw visitor context data
-            
-        Returns:
-            Dict[str, Any]: Processed data with AI-generated insights
+        Main processing method to generate AI follow-up notes.
         """
         try:
             visitor_context = VisitorContextData(**data)
             ai_note = await self.generate_comprehensive_note(visitor_context)
-            
-            # Safely extract person_id from visitor_profile
+
             visitor_profile = visitor_context.visitor_profile or {}
             person_id = visitor_profile.get("person_id", "")
-            
+
             processed_data = {
                 "visitor_id": person_id,
                 "schema": self.schema,
@@ -75,100 +54,77 @@ class FollowupNoteAgent(BaseAgent):
                     "agent_id": self.agent_id,
                     "model_version": self.model,
                     "generated_at": datetime.now(timezone.utc).isoformat(),
-                    "confidence_score": ai_note.get("confidence_score", 0.85)
-                }
+                    "confidence_score": ai_note.get("confidence_score", 0.85),
+                },
             }
-            
-            self.log_activity(f"Generated comprehensive note for visitor {person_id}")
+            self.log_activity(f"Generated note for visitor {person_id}")
             return processed_data
-            
+
         except Exception as e:
             logger.error(f"Error processing visitor data: {e}")
             raise
-        
+
     async def generate_comprehensive_note(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
         """
-        Generate a comprehensive follow-up note by analyzing multiple aspects of visitor data.
-        
-        Args:
-            visitor_context (VisitorContextData): Complete visitor context information
-        
-        Returns:
-            Dict[str, Any]: Structured AI-generated note with recommendations
+        Generate a comprehensive AI note with fallbacks.
         """
         try:
-            # Log data availability for debugging (use logger instead of print)
-            logger.debug(f"Processing visitor context with {len(visitor_context.public_teams or [])} teams, "
-                        f"{len(visitor_context.public_groups or [])} groups, "
-                        f"{len(visitor_context.upcoming_events or [])} events")
-            
-            # Extract and consolidate visitor data
             visitor_data = self._extract_visitor_data(visitor_context)
-            
-            # Execute parallel analysis tasks with proper error handling
             analysis_results = await self._perform_parallel_analysis(visitor_context)
-            
-            # Generate contact strategy
-            contact_info = await self._determine_optimal_contact(visitor_context, analysis_results['profile'])
-            
-            # Create summaries
+            contact_info = await self._determine_optimal_contact(
+                visitor_context, analysis_results['profile']
+            )
             natural_summary = self._create_natural_language_summary(
-                visitor_data, analysis_results['profile'], 
+                visitor_data, analysis_results['profile'],
                 analysis_results['family'], analysis_results['sentiment']
             )
-            
             raw_content = self._create_raw_content(
                 visitor_data, analysis_results, contact_info, natural_summary
             )
-            
-            # Build final AI note structure
+
             ai_note = self._build_ai_note_structure(
-                visitor_data, analysis_results, contact_info, 
+                visitor_data, analysis_results, contact_info,
                 natural_summary, raw_content, visitor_context
             )
-            
-            self.log_activity(f"Generated comprehensive note for {visitor_data.get('email', 'unknown visitor')}")
+
+            quality = self._validate_quality({
+                "content": raw_content,
+                "recommended_next_steps": ai_note.get("recommended_next_steps", {}),
+                "ai_note": ai_note,
+            })
+
+            if not quality.passed:
+                logger.warning(f"Quality issues detected: {quality.issues}")
+
+            self.log_activity(f"Generated note for {visitor_data.get('email', 'unknown')}")
+
             return ai_note
-            
+
         except Exception as e:
-            logger.error(f"Error generating comprehensive note: {e}")
-            # Return a minimal fallback note
+            logger.error(f"Error in comprehensive note generation: {e}")
             return self._create_fallback_note(visitor_context)
 
     def _extract_visitor_data(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
-        """
-        Extract and consolidate visitor data from various sources.(mainly welcome form)
-        
-        Args:
-            visitor_context (VisitorContextData): Complete visitor context
-            
-        Returns:
-            Dict[str, Any]: Consolidated visitor data
-        """
-        visitor_profile = visitor_context.visitor_profile or {}
-        welcome_form_data = visitor_context.visitor_welcome_form or {}
-        
-        # Extract nested data safely
-        person_info = welcome_form_data.get('person_info', {})
-        visit_info = welcome_form_data.get('visit_info', {})
-        spiritual_info = welcome_form_data.get('spiritual_info', {})
-        
+        """Extract and consolidate visitor data from welcome form and profile."""
+        welcome_form = visitor_context.visitor_welcome_form or {}
+        person_info = welcome_form.get('person_info', {})
+        visit_info = welcome_form.get('visit_info', {})
+        spiritual_info = welcome_form.get('spiritual_info', {})
+
         return {
-            # Personal information
             "title": person_info.get('title', ''),
             "first_name": person_info.get('first_name', ''),
             "middle_name": person_info.get('middle_name', ''),
             "last_name": person_info.get('last_name', ''),
+            "address": person_info.get('address', {}),
             "gender": person_info.get('gender', ''),
             "race": person_info.get('race', ''),
             "occupation": person_info.get('occupation', ''),
             "email": person_info.get('email', ''),
             "phone": person_info.get('phone', ''),
             "person_id": person_info.get('id', ''),
-            "address": person_info.get('address', {}),
-            
-            # Visit information
-            "visit_date": self._format_visit_date(visit_info.get('visit_date', '')),
+
+            "visit_date": self._format_visit_date(visit_info.get('visit_date')),
             "how_heard_about_church": visit_info.get('how_heard_about_church', ''),
             "recently_relocated": visit_info.get('recently_relocated', ''),
             "best_contact_time": visit_info.get('best_contact_time', ''),
@@ -176,319 +132,371 @@ class FollowupNoteAgent(BaseAgent):
             "joined_via": visit_info.get('joined_via', ''),
             "considering_joining": visit_info.get('considering_joining', ''),
             "joining_our_church": visit_info.get('joining_our_church', ''),
-            
-            # Spiritual information
+
             "spiritual_need": spiritual_info.get('spiritual_need', ''),
             "spiritual_challenge": spiritual_info.get('spiritual_challenge', ''),
             "prayer_request": spiritual_info.get('prayer_request', ''),
             "feedback": spiritual_info.get('feedback', ''),
             "interested_in_devotional": spiritual_info.get('interested_in_daily_devotional', ''),
-            
-            # Additional data
-            "interests": welcome_form_data.get('interests', {}),
-            "profile": visitor_profile,
-            "welcome_form": welcome_form_data
+
+            "interests": welcome_form.get('interests', {}),
+            "profile": visitor_context.visitor_profile,
+            "welcome_form": welcome_form,
         }
 
     async def _perform_parallel_analysis(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
-        """
-        Perform parallel analysis tasks with proper error handling.
-        
-        Args:
-            visitor_context (VisitorContextData): Complete visitor context
-            
-        Returns:
-            Dict[str, Any]: Analysis results with fallbacks
-        """
-        # Define default values for failed tasks
-        default_values = {
-            'profile': {
-                "interests": ["General Fellowship"],
-                "ministry_areas": ["Sunday Service"],
-                "life_stage": "Unknown",
-                "spiritual_background": "Unknown",
-                "specific_needs": [],
-                "engagement_level": "medium",
-                "follow_up_priority": "medium"
-            },
-            'family': {
-                "context": "Individual visit",
-                "is_family": False,
-                "member_count": 1,
-                "has_children": False,
-                "children_count": 0,
-                "is_existing": False
-            },
-            'sentiment': {
-                "overall_sentiment": "Neutral",
-                "confidence": 0.5,
-                "key_emotions": ["Curious"],
-                "concerns": [],
-                "positive_indicators": []
-            },
-            'recommendations': {
-                "community_integration": [],
-                "event_engagement": [],
-                "personal_needs": None,
-                "feedback_insights": None
-            }
+        """Run profile, family, sentiment, and recommendations in parallel."""
+        defaults = {
+            'profile': self._fallback_profile(),
+            'family': self._fallback_family(visitor_context),
+            'sentiment': self._fallback_sentiment(),
+            'recommendations': self._fallback_recommendations(visitor_context),
         }
-        
+
+        tasks = [
+            self._analyze_visitor_profile(visitor_context),
+            self._analyze_family_context(visitor_context),
+            self._perform_sentiment_analysis(visitor_context),
+            self._generate_recommendations(visitor_context),
+        ]
+
+        results = {}
+        for task_name, task, default in zip(defaults.keys(), tasks, defaults.values()):
+            try:
+                result = await task
+                results[task_name] = result if result else default
+            except Exception as e:
+                logger.warning(f"Analysis failed for {task_name}: {e}")
+                results[task_name] = default
+
+        return results
+
+    # --- ANALYSIS METHODS ---
+
+    async def _analyze_visitor_profile(self, visitor_context: VisitorContextData) -> Optional[Dict[str, Any]]:
         try:
-            # Execute parallel analysis tasks
-            analysis_tasks = await asyncio.gather(
-                self._analyze_visitor_profile(visitor_context),
-                self._analyze_family_context(visitor_context),
-                self._perform_sentiment_analysis(visitor_context),
-                self._generate_recommendations(visitor_context),
-                return_exceptions=True
-            )
+            visitor_data = self._extract_visitor_data(visitor_context)
             
-            # Process results with fallbacks for exceptions
-            task_names = ['profile', 'family', 'sentiment', 'recommendations']
-            results = {}
+            # Log input data quality
+            logger.info(f"Analyzing visitor profile with data: {len(visitor_data)} fields")
+            key_fields = ['first_name', 'email', 'phone', 'spiritual_need', 'interests']
+            populated_fields = [field for field in key_fields if visitor_data.get(field)]
+            logger.info(f"Key populated fields: {populated_fields}")
             
-            for i, (task_name, task_result) in enumerate(zip(task_names, analysis_tasks)):
-                if isinstance(task_result, Exception):
-                    logger.warning(f"Analysis task '{task_name}' failed: {task_result}")
-                    results[task_name] = default_values[task_name]
-                else:
-                    results[task_name] = task_result
+            # Generate prompt with better error handling
+            try:
+                prompt = self.prompts.get_visitor_profile_analysis_prompt(visitor_data, "First time visitor seeking spiritual growth")
+                logger.debug(f"Generated prompt length: {len(prompt)} characters")
+                
+                # Add validation for prompt content
+                if not prompt or len(prompt) < 100:
+                    logger.error(f"Generated prompt is too short or empty: {len(prompt)} characters")
+                    return self._fallback_profile()
+                    
+            except Exception as prompt_error:
+                logger.error(f"Prompt generation failed: {prompt_error}", exc_info=True)
+                return self._fallback_profile()
             
-            return results
+            # Enhanced LLM call with retry logic and adaptive token limits
+            max_retries = 3
+            base_tokens = 2500
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    # Increase tokens on retry if previous attempt hit limit
+                    token_limit = base_tokens + (attempt * 100)  # 1200, 1600, 2000
+                    
+                    response = await self.generate_llm_content(
+                        prompt, 
+                        max_tokens=token_limit, 
+                        temperature=self.temperature
+                    )
+                    
+                    logger.info(f"LLM response attempt {attempt + 1} (tokens: {token_limit}): {len(response) if response else 0} characters")
+                    
+                    if response and response.strip():
+                        logger.debug(f"Raw LLM response: {response[:500]}...")
+                        break
+                    else:
+                        logger.warning(f"Empty LLM response on attempt {attempt + 1}")
+                        if attempt < max_retries:
+                            await asyncio.sleep(1)  # Brief delay before retry
+                            continue
+                        else:
+                            logger.error("All LLM attempts returned empty responses")
+                            return self._fallback_profile()
+                            
+                except RuntimeError as e:
+                    if "token limit" in str(e).lower() and attempt < max_retries:
+                        logger.warning(f"Token limit hit on attempt {attempt + 1}, retrying with more tokens")
+                        continue
+                    else:
+                        raise
+                except Exception as llm_error:
+                    logger.error(f"LLM call attempt {attempt + 1} failed: {llm_error}")
+                    if attempt < max_retries:
+                        await asyncio.sleep(1)
+                        continue
+                    else:
+                        raise
+            
+            # Enhanced JSON parsing
+            parsed_response = self._parse_json_response(response)
+            if not parsed_response:
+                logger.warning(f"Failed to parse LLM response as JSON. Response: {response[:500]}...")
+                # Try to extract partial data
+                partial_data = self._extract_partial_json_data(response)
+                if partial_data:
+                    logger.info("Successfully extracted partial data from malformed JSON")
+                    return partial_data
+                return self._fallback_profile()
+            
+            logger.info(f"Successfully parsed visitor profile analysis: {list(parsed_response.keys())}")
+            return parsed_response
             
         except Exception as e:
-            logger.error(f"Error in parallel analysis: {e}")
-            return default_values
+            logger.error(f"Visitor profile analysis failed with exception: {e}", exc_info=True)
+            return self._fallback_profile()
+
+    async def _analyze_family_context(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
+        scenario_info = getattr(visitor_context, "scenario_info", None)
+        if not scenario_info:
+            return self._fallback_family(visitor_context)
+
+        fam_id = getattr(scenario_info, "fam_id", None)
+        family_head_id = getattr(scenario_info, "family_head_id", None)
+        members_to_query = getattr(scenario_info, "family_members_to_query", [])
+        scenario_type = (getattr(scenario_info, "scenario_type", "") or "").strip().lower()
+
+        is_family = scenario_type.startswith("family")
+        is_existing = "existing" in scenario_type
+
+        family_members = list(visitor_context.family_members or [])
+        member_count = len(family_members)  if is_family else 1
+
+        def _is_child(m: Dict[str, Any]) -> bool:
+            age = m.get("age")
+            if age is not None:
+                try:
+                    return int(age) < 18
+                except:
+                    pass
+            rel = (m.get("relationship") or m.get("relation") or "").lower()
+            return rel in {"child", "son", "daughter"}
+
+        children_count = sum(1 for m in family_members if isinstance(m, dict) and _is_child(m))
+
+        context_desc = (
+            f"{'Existing' if is_existing else 'New'} family visit with {member_count} member{'s' if member_count != 1 else ''}. "
+            f"{'Includes children.' if children_count else 'All adults.'}"
+            if is_family else "Individual visit."
+        )
+
+        return {
+            "context": context_desc,
+            "is_family": is_family,
+            "is_existing": is_existing,
+            "member_count": member_count,
+            "has_children": children_count > 0,
+            "children_count": children_count,
+            "family_id": fam_id,
+            "family_head_id": family_head_id,
+            "family_members_to_query": members_to_query,
+        }
+
+    async def _perform_sentiment_analysis(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
+        visitor_data = self._extract_visitor_data(visitor_context)
+        feedback = visitor_data.get("feedback", visitor_data.get("comments", ""))
+        if not feedback.strip():
+            return self._fallback_sentiment()
+
+        try:
+            prompt = self.prompts.get_sentiment_analysis_prompt({
+                "feedback_text": feedback,
+                "rating": visitor_data.get("rating"),
+                "concerns": visitor_data.get("concerns", []),
+                "positive_aspects": visitor_data.get("positive_feedback", [])
+            }, "Historical context")
+            response = await self.generate_llm_content(prompt, max_tokens=500, temperature=self.temperature)
+            parsed = self._parse_json_response(response)
+            return parsed if self._validate_sentiment_analysis(parsed) else self._fallback_sentiment()
+        except Exception as e:
+            logger.warning(f"Sentiment analysis failed, using fallback: {e}")
+            return self._fallback_sentiment()
+
+    async def _generate_recommendations(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
+        visitor_data = self._extract_visitor_data(visitor_context)
+        teams = self._extract_opportunity_names(visitor_context.public_teams or [])
+        groups = self._extract_opportunity_names(visitor_context.public_groups or [])
+        events = self._extract_opportunity_names(visitor_context.upcoming_events or [])
+
+        try:
+            prompt = self.prompts.get_recommendations_prompt(visitor_data, visitor_data["welcome_form"], teams, groups, events)
+            response = await self.generate_llm_content(prompt, max_tokens=3500, temperature=self.temperature)
+            parsed = self._parse_json_response(response)
+            return parsed if self._validate_recommendations(parsed) else self._fallback_recommendations(visitor_context)
+        except Exception as e:
+            logger.warning(f"Recommendations generation failed, using fallback: {e}")
+            return self._fallback_recommendations(visitor_context)
+
+    async def _determine_optimal_contact(self, visitor_context: VisitorContextData, profile_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        welcome_form = visitor_context.visitor_welcome_form or {}
+        visit_info = welcome_form.get('visit_info', {})
+    
+        time_map = {
+            'weekday_morning': 'Weekday mornings (9 AM - 12 PM)',
+            'weekday_afternoon': 'Weekday afternoons (1 PM - 5 PM)', 
+            'weekday_evening': 'Weekday evenings (6 PM - 8 PM)',
+            'weekend_morning': 'Weekend mornings (9 AM - 12 PM)',
+            'weekend_afternoon': 'Weekend afternoons (1 PM - 5 PM)',
+            'weekend_evening': 'Weekend evenings (6 PM - 8 PM)',
+            # Add mappings for simple form values
+            'morning': 'Weekday mornings (9 AM - 12 PM)',
+            'afternoon': 'Weekday afternoons (1 PM - 5 PM)',
+            'evening': 'Weekday evenings (6 PM - 8 PM)',
+        }
+    
+        preferred_time = visit_info.get('best_contact_time', 'weekday_evening')
+        # Convert to lowercase for case-insensitive matching
+        preferred_time_lower = preferred_time.lower() if preferred_time else 'weekday_evening'
+        
+        urgency = "high" if profile_analysis.get('follow_up_priority') == "high" else "normal"
+        follow_up_days = 2 if urgency == "high" else 3
+    
+        return {
+            "method": visit_info.get('preferred_communication_method', 'email'),
+            "best_time": time_map.get(preferred_time_lower, time_map.get(preferred_time, 'Weekday evenings (6 PM - 8 PM)')),
+            "urgency": urgency,
+            "follow_up_days": follow_up_days,
+        }
+
+    # --- BUILDERS ---
 
     def _build_ai_note_structure(
-        self, 
-        visitor_data: Dict[str, Any], 
-        analysis_results: Dict[str, Any], 
-        contact_info: Dict[str, Any],
-        natural_summary: str, 
-        raw_content: str, 
-        visitor_context: VisitorContextData
+        self, visitor_data: Dict[str, Any], analysis_results: Dict[str, Any], contact_info: Dict[str, Any],
+        natural_summary: str, raw_content: str, visitor_context: VisitorContextData
     ) -> Dict[str, Any]:
-        """
-        Build the final AI note structure with all required fields.
-        
-        Args:
-            visitor_data: Consolidated visitor data
-            analysis_results: Results from parallel analysis
-            contact_info: Optimal contact strategy
-            natural_summary: Natural language summary
-            raw_content: Formatted raw content
-            visitor_context: Original visitor context
-            
-        Returns:
-            Dict[str, Any]: Complete AI note structure
-        """
-        # Transform recommendations to match schema requirements
-        recommendations = analysis_results['recommendations']
-        
-        church_integration_recs = self._transform_recommendations(
-            recommendations.get("community_integration", []), "community_integration"
-        )
-        event_engagement_recs = self._transform_recommendations(
-            recommendations.get("event_engagement", []), "event_engagement"
-        )
-        
-        # Process personal needs and feedback insights
-        personal_needs_response = self._process_personal_needs(recommendations.get("personal_needs"))
-        feedback_insight = self._process_feedback_insights(recommendations.get("feedback_insights"))
-        
-        # Build the complete AI note
-        ai_note = {
-            # Basic visitor information
+        recs = analysis_results['recommendations']
+        church_recs = self._transform_recommendations(recs.get("community_integration", []), "community_integration")
+        event_recs = self._transform_recommendations(recs.get("event_engagement", []), "event_engagement")
+
+        return {
             "visitor_full_name": self._format_full_name(visitor_data),
             "visitor_phone": visitor_data.get("phone", ""),
             "visitor_email": visitor_data.get("email", ""),
             "first_visit": self._format_visit_date_for_output(visitor_data.get("visit_date")),
-            "best_contact_time": visitor_data.get("best_contact_time", ""),
-            "channel_to_contact": visitor_data.get("preferred_communication_method", ""),
-            
-            # Analysis results
+            "best_contact_time": contact_info["best_time"],
+            "channel_to_contact": contact_info["method"],
             "key_interests_summary": analysis_results['profile'].get("interests", []),
             "family_context_info": analysis_results['family'].get("context", ""),
             "sentiment_analysis": analysis_results['sentiment'],
-            
-            # Recommendations
-            "church_integration_recommendations": church_integration_recs,
-            "event_engagement_recommendations": event_engagement_recs,
-            "personal_needs_response": personal_needs_response,
-            "feedback_insight": feedback_insight,
-            
-            # Metadata
+            "church_integration_recommendations": church_recs,
+            "event_engagement_recommendations": event_recs,
+            "personal_needs_response": self._process_personal_needs(recs.get("personal_needs")),
+            "feedback_insight": self._process_feedback_insights(recs.get("feedback_insights")),
             "ai_generated_label": True,
             "generation_timestamp": datetime.now(timezone.utc).isoformat(),
             "person_id": str(visitor_data.get("person_id", "")),
             "fam_id": str(visitor_context.scenario_info.fam_id) if visitor_context.scenario_info else "",
-            
-            # Content
             "raw_content": raw_content,
             "natural_summary": natural_summary,
-            
-            # Compatibility aliases
-            "email": visitor_data.get("email", ""),
-            "phone": visitor_data.get("phone", ""),
-            "key_interests": analysis_results['profile'].get("interests", []),
-            "family_context": analysis_results['family'].get("context", ""),
-            
-            # Additional metadata
             "confidence_score": analysis_results['sentiment'].get("confidence", 0.85),
             "data_sources_used": self._get_data_sources_used(visitor_context),
-            "recommended_next_steps": self._format_next_steps(
-                church_integration_recs, event_engagement_recs, 
-                personal_needs_response, feedback_insight
-            )
+            "recommended_next_steps": self._format_next_steps(church_recs, event_recs,
+                self._process_personal_needs(recs.get("personal_needs")),
+                self._process_feedback_insights(recs.get("feedback_insights"))
+            ),
         }
-        
-        return ai_note
-
-    def _process_personal_needs(self, personal_needs: Any) -> Optional[Dict[str, Any]]:
-        """Process personal needs response into structured format."""
-        if not personal_needs:
-            return None
-            
-        if isinstance(personal_needs, str):
-            return {
-                "type": "personal_needs",
-                "summary": personal_needs,
-                "action_required": True,
-                "escalation_required": False
-            }
-        elif isinstance(personal_needs, dict):
-            return personal_needs
-        return None
-
-    def _process_feedback_insights(self, feedback_insights: Any) -> Optional[Dict[str, Any]]:
-        """Process feedback insights into structured format."""
-        if not feedback_insights:
-            return None
-            
-        if isinstance(feedback_insights, str):
-            return {
-                "type": "feedback_insight",
-                "tone": "positive",
-                "category": "general",
-                "action_step": feedback_insights
-            }
-        elif isinstance(feedback_insights, dict):
-            return feedback_insights
-        return None
-
 
     def _create_natural_language_summary(
-        self, 
-        visitor_data: Dict[str, Any], 
-        profile_analysis: Dict[str, Any], 
-        family_analysis: Dict[str, Any], 
-        sentiment_analysis: Dict[str, Any]
+        self, visitor_data: Dict[str, Any], profile_analysis: Dict[str, Any],
+        family_analysis: Dict[str, Any], sentiment_analysis: Dict[str, Any]
     ) -> str:
-        """
-        Create a natural language summary of the visitor.
-        
-        Args:
-            visitor_data: Consolidated visitor data
-            profile_analysis: Analyzed visitor interests and characteristics
-            family_analysis: Family context information
-            sentiment_analysis: Emotional sentiment analysis
-            
-        Returns:
-            str: Natural language summary
-        """
         first_name = visitor_data.get('first_name', 'This visitor')
-        last_name = visitor_data.get('last_name', '')
-        full_name = f"{first_name} {last_name}".strip()
-        
-        # Use more sophisticated title determination
+        full_name = f"{first_name} {visitor_data.get('last_name', '')}".strip()
         title = self._determine_title(visitor_data)
         
-        summary_parts = []
-        
-        # Basic introduction
-        if family_analysis.get('is_family', False):
-            if family_analysis.get('has_children', False):
-                summary_parts.append(f"{title} {full_name} is a new member of our community who visited with their family, including children.")
-            else:
-                summary_parts.append(f"{title} {full_name} is a new member of our community who visited with their family.")
+        # Fix: Only use title if it's different from first_name to avoid duplication
+        if title and title != first_name:
+            name_to_use = f"{title} {full_name}"
         else:
-            summary_parts.append(f"{title} {full_name} is a new member of our community who visited our church.")
-        
-        # Add sentiment and experience
-        sentiment = sentiment_analysis.get('overall_sentiment', 'neutral').lower()
-        if sentiment == 'positive':
-            summary_parts.append("They enjoyed their visit and had a positive experience with our service.")
-        elif sentiment == 'negative':
-            summary_parts.append("They had some concerns during their visit that we should address.")
-        else:
-            summary_parts.append("They had a good experience and are interested in learning more about our community.")
-        
-        # Add interests
-        interests = profile_analysis.get('interests', [])
-        if interests:
-            if len(interests) == 1:
-                summary_parts.append(f"They expressed particular interest in {interests[0].lower()}.")
-            else:
-                interest_list = ', '.join(interests[:-1]) + f" and {interests[-1]}"
-                summary_parts.append(f"They expressed interest in {interest_list.lower()}.")
-        
-        # Add how they heard about the church
-        how_heard = visitor_data.get('how_heard_about_church', '')
-        if how_heard:
-            summary_parts.append(f"They learned about our church through {how_heard.lower()}.")
-        
-        return " ".join(summary_parts)
+            name_to_use = full_name
 
+        parts = [f"{name_to_use} is a new member of our community who "]
+        if family_analysis.get("is_family"):
+            parts[0] += "visited with their family"
+            if family_analysis.get("has_children"):
+                parts[0] += ", including children."
+            else:
+                parts[0] += "."
+        else:
+            parts[0] += "visited our church."
+
+        
+        # Add address information when available
+        if visitor_data.get('address'):
+            address = visitor_data.get('address', {})
+            if address and isinstance(address, dict):
+                address_parts = []
+                if address.get('city'):
+                    address_parts.append(address['city'])
+                if address.get('state'):
+                    address_parts.append(address['state'])
+                if address.get('zip'):
+                    address_parts.append(address['zip'])
+                
+                if address_parts:
+                    location = ', '.join(address_parts)
+            parts.append(f"They are from {location}.")
+
+        sentiment = sentiment_analysis.get("overall_sentiment", "neutral").lower()
+        if sentiment == "positive":
+            parts.append("They enjoyed their visit and had a positive experience.")
+        elif sentiment == "negative":
+            parts.append("They had some concerns during their visit that we should address.")
+        else:
+            parts.append("They had a good experience and are interested in learning more.")
+
+        interests = profile_analysis.get("interests", [])
+        if interests:
+            interest_list = ', '.join(interests[:-1]) + (f" and {interests[-1]}" if len(interests) > 1 else interests[0])
+            parts.append(f"They expressed interest in {interest_list.lower()}.")
+
+        how_heard = visitor_data.get("how_heard_about_church")
+        if how_heard:
+            parts.append(f"They learned about our church through {how_heard.lower()}.")
+
+        return " ".join(parts)
 
     def _create_raw_content(
-        self, 
-        visitor_data: Dict[str, Any], 
-        analysis_results: Dict[str, Any], 
-        contact_info: Dict[str, Any],
-        natural_summary: str = ""
+        self, visitor_data: Dict[str, Any], analysis_results: Dict[str, Any],
+        contact_info: Dict[str, Any], natural_summary: str = ""
     ) -> str:
-        """
-        Create formatted markdown content for display in the UI.
-        
-        Args:
-            visitor_data: Consolidated visitor data
-            analysis_results: Results from parallel analysis
-            contact_info: Optimal contact strategy
-            natural_summary: Natural language summary of the visitor
-            
-        Returns:
-            str: Formatted markdown content
-        """
-        content_parts = [
+        content = [
             "=== AI-Generated Visitor Follow-up Summary ===",
             "",
         ]
-        
         if natural_summary:
-            content_parts.extend([natural_summary, ""])
-        
-        content_parts.extend([
+            content.append(natural_summary + "\n")
+
+        content.extend([
             "VISITOR INFORMATION:",
             f"Name: {visitor_data.get('first_name', '')} {visitor_data.get('last_name', '')}",
             f"Email: {visitor_data.get('email', '')}",
             f"Phone: {visitor_data.get('phone', '')}",
-            f"Best Contact Time: {visitor_data.get('best_contact_time', 'Weekday evenings (6 PM - 8 PM)')}",
-            f"Channel To Contact Them: {visitor_data.get('preferred_communication_method', 'Email')}",
+            f"Best Contact Time: {contact_info['best_time']}",
+            f"Channel To Contact Them: {contact_info['method']}",
             f"First Visit: {visitor_data.get('visit_date', '')}",
             "",
             "KEY INTERESTS:",
-            f"{', '.join(analysis_results['profile'].get('interests', ['General Fellowship']))}",
+            ", ".join(analysis_results['profile'].get('interests', ['General Fellowship'])),
             "",
             "FAMILY CONTEXT:",
-            f"{analysis_results['family'].get('context', 'Individual visitor')}",
+            analysis_results['family'].get('context', 'Individual visitor'),
             "",
             "SENTIMENT ANALYSIS:",
             f"Overall: {analysis_results['sentiment'].get('overall_sentiment', 'Neutral')}",
             f"Confidence: {analysis_results['sentiment'].get('confidence', 0.5)*100:.0f}%",
-            "",
-            f"RECOMMENDED NEXT STEPS: {analysis_results['recommendations']}",
             "",
             "=== Generation Metadata ===",
             f"Generated: {datetime.now(timezone.utc).isoformat()}",
@@ -496,640 +504,279 @@ class FollowupNoteAgent(BaseAgent):
             "",
             "[This note was automatically generated by AI and may require review]"
         ])
-        
-        return "\n".join(content_parts)
+        return "\n".join(content)
 
-    
-    async def _analyze_visitor_profile(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
-        """
-        Analyze visitor profile to extract interests, ministry areas, and engagement level.
+    # --- UTILITIES & FALLBACKS ---
+
+    def _parse_json_response(self, text: str) -> Optional[Dict[str, Any]]:
+        if not text or not text.strip():
+            logger.warning("Empty text provided to JSON parser")
+            return None
+            
+        # Clean the text
+        text = text.strip()
         
-        Args:
-            visitor_context (VisitorContextData): Complete visitor context
-            
-        Returns:
-            Dict[str, Any]: Analyzed profile data
-        """
+        # Try to extract JSON from markdown code blocks
+        json_match = re.search(r'```(?:json)?\s*({.*?})\s*```', text, re.DOTALL)
+        if json_match:
+            text = json_match.group(1)
+        
+        # Try to find JSON object boundaries
+        start_idx = text.find('{')
+        end_idx = text.rfind('}') + 1
+        
+        if start_idx != -1 and end_idx > start_idx:
+            text = text[start_idx:end_idx]
+        
         try:
-            visitor_profile = visitor_context.visitor_profile or {}
-            welcome_form = visitor_context.visitor_welcome_form or {}
+            parsed = json.loads(text)
+            logger.debug(f"Successfully parsed JSON with keys: {list(parsed.keys()) if isinstance(parsed, dict) else 'not a dict'}")
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON parsing failed: {e}. Text: {text[:200]}...")
+            # Try partial extraction as fallback
+            partial_data = self._extract_partial_json_data(text)
+            if partial_data:
+                return partial_data
+            return None
+
+    def _parse_llm_response(self, response_text: str, response_type: str = "general") -> Dict[str, Any]:
+        """Enhanced LLM response parser with type-specific fallbacks."""
+        try:
+            # Clean the response text
+            cleaned_text = response_text.strip()
             
-            # Extract visitor data for analysis
-            person_info = welcome_form.get('person_info', {})
-            visit_info = welcome_form.get('visit_info', {})
-            spiritual_info = welcome_form.get('spiritual_info', {})
+            # Try to extract JSON from markdown code blocks
+            if '```json' in cleaned_text:
+                start = cleaned_text.find('```json') + 7
+                end = cleaned_text.find('```', start)
+                if end != -1:
+                    cleaned_text = cleaned_text[start:end].strip()
+            elif '```' in cleaned_text:
+                start = cleaned_text.find('```') + 3
+                end = cleaned_text.find('```', start)
+                if end != -1:
+                    cleaned_text = cleaned_text[start:end].strip()
             
-            prompt = f"""
-            Analyze this visitor profile and provide insights:
+            parsed = json.loads(cleaned_text)
+            return parsed if isinstance(parsed, dict) else self._get_fallback_structure(response_type)
             
-            VISITOR DATA:
-            - Name: {person_info.get('first_name', '')} {person_info.get('middle_name', '')} {person_info.get('last_name', '')}
-            - Gender: {person_info.get('gender', '')}
-            - Occupation: {person_info.get('occupation', '')}
-            - Recently Relocated: {person_info.get('recently_relocated', '')}
-            - How they heard about church: {visit_info.get('how_heard_about_church', '')}
-            - Considering joining: {visit_info.get('considering_joining', '')}
-            - Spiritual need: {spiritual_info.get('spiritual_need', '')}
-            - Prayer request: {spiritual_info.get('prayer_request', '')}
-            - Feedback: {spiritual_info.get('feedback', '')}
-            - Interested In Getting Daily Devosionals: {spiritual_info.get('interest_in_daily_devotional', '')}
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing failed for {response_type}: {e}. Response: {response_text[:500]}")
+            # Try partial extraction
+            partial_data = self._extract_partial_json_data(response_text)
+            if partial_data:
+                return partial_data
+            # Return type-specific fallback
+            return self._get_fallback_structure(response_type)
+
+    def _get_fallback_structure(self, response_type: str) -> Dict[str, Any]:
+        """Return appropriate fallback structure based on response type."""
+        fallbacks = {
+            "profile": {
+                "interests": [],
+                "needs": [],
+                "engagement_opportunities": [],
+                "sentiment": "neutral",
+                "follow_up_actions": [],
+                "confidence": 0.5
+            },
+            "sentiment": {
+                "overall_sentiment": "neutral",
+                "confidence": 0.5,
+                "key_themes": [],
+                "emotional_indicators": []
+            },
+            "recommendations": {
+                "community_integration": [],
+                "event_engagement": [],
+                "personal_needs": [],
+                "feedback_insights": []
+            },
+            "general": {
+                "interests": [],
+                "needs": [],
+                "engagement_opportunities": [],
+                "sentiment": "neutral",
+                "follow_up_actions": [],
+                "confidence": 0.5
+            }
+        }
+        return fallbacks.get(response_type, fallbacks["general"])
+
+    def _extract_partial_json_data(self, text: str) -> Optional[Dict[str, Any]]:
+        """Extract partial data from malformed JSON responses."""
+        try:
+            # Look for key-value patterns in the text
+            partial_data = {}
             
-            Provide analysis as valid JSON only (no markdown) with these exact keys:
-            {{
-                "interests": ["list of inferred interests"],
-                "ministry_areas": ["relevant ministry areas"],
-                "life_stage": "inferred life stage",
-                "spiritual_background": "assessment of spiritual background",
-                "specific_needs": ["identified specific needs"],
-                "engagement_level": "low/medium/high",
-                "follow_up_priority": "low/medium/high"
-            }}
-            """
+            # Extract interests
+            interests_match = re.search(r'"interests"\s*:\s*\[(.*?)\]', text, re.DOTALL)
+            if interests_match:
+                interests_str = interests_match.group(1)
+                interests = [item.strip('"\' ') for item in interests_str.split(',') if item.strip()]
+                partial_data['interests'] = interests
             
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.models.generate_content(
-                    model=self.model, 
-                    contents=prompt,
-                    config={"temperature": self.temperature}
-                )
-            )
+            # Extract sentiment
+            sentiment_match = re.search(r'"sentiment"\s*:\s*"(.*?)"', text)
+            if sentiment_match:
+                partial_data['sentiment'] = sentiment_match.group(1)
             
-            parsed_response = self._extract_json_from_response(response.text)
+            # Extract follow_up_actions
+            actions_match = re.search(r'"follow_up_actions"\s*:\s*\[(.*?)\]', text, re.DOTALL)
+            if actions_match:
+                actions_str = actions_match.group(1)
+                actions = [item.strip('"\' ') for item in actions_str.split(',') if item.strip()]
+                partial_data['follow_up_actions'] = actions
             
-            if parsed_response:
-                logger.debug(f"Profile analysis completed: {parsed_response}")
-                return parsed_response
-            else:
-                logger.warning("Failed to parse profile analysis response")
-                return self._create_fallback_profile_analysis()
+            if partial_data:
+                logger.info(f"Extracted partial data: {list(partial_data.keys())}")
+                return partial_data
                 
         except Exception as e:
-            logger.error(f"Error analyzing visitor profile: {e}")
-            return self._create_fallback_profile_analysis()
-
-    async def _analyze_family_context(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
-        """
-        Analyze family context and relationships.
+            logger.warning(f"Partial data extraction failed: {e}")
         
-        Args:
-            visitor_context (VisitorContextData): Complete visitor context
-            
-        Returns:
-            Dict[str, Any]: Family context analysis results
-        """
-        try:
-            scenario_info = visitor_context.scenario_info 
-            family_members = visitor_context.family_members or []
+        return None
 
-            # Determine family context from scenario info
-            is_family_visit = "family" in (scenario_info.scenario_type if scenario_info else "")
-            is_existing_family = "existing" in (scenario_info.scenario_type if scenario_info else "")
-            family_member_count = len(scenario_info.family_members_to_query) if scenario_info and scenario_info.family_members_to_query else 1
-            
-            # Count children from family members
-            children_count = sum(1 for member in family_members 
-                               if member.get('age') and int(member.get('age', 0)) < 18)
-            
-            # Build context description
-            if is_family_visit:
-                context_description = f"Family visit with {family_member_count} members. "
-                if children_count > 0:
-                    context_description += f"Family includes {children_count} children. "
-                else:
-                    context_description += "Adult family members. "
-            else:
-                context_description = "Individual visit. "
-            
-            if is_existing_family:
-                context_description += "Family has previous church connections."
-            else:
-                context_description += "New family to the church."
-            
-            return {
-                'context': context_description,
-                'is_family': is_family_visit,
-                'member_count': family_member_count,
-                'has_children': children_count > 0,
-                'children_count': children_count,
-                'is_existing': is_existing_family
-            }
-            
-        except Exception as e:
-            logger.error(f"Error analyzing family context: {e}")
-            return {
-                'context': "Individual visit",
-                'is_family': False,
-                'member_count': 1,
-                'has_children': False,
-                'children_count': 0,
-                'is_existing': False
-            }
-
-    async def _perform_sentiment_analysis(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
-        """
-        Perform sentiment analysis on visitor feedback and interactions.
+    def _validate_quality(self, data: Dict[str, Any]) -> QualityResult:
+        issues = []
+        score = 1.0
+        content = data.get("content", "")
         
-        Args:
-            visitor_context (VisitorContextData): Complete visitor context
-            
-        Returns:
-            Dict[str, Any]: Sentiment analysis results
-        """
-        try:
-            welcome_form = visitor_context.visitor_welcome_form or {}
-            spiritual_info = welcome_form.get('spiritual_info', {})
-            
-            feedback = spiritual_info.get('feedback', '')
-            prayer_request = spiritual_info.get('prayer_request', '')
-            
-            prompt = f"""
-            Analyze the sentiment and emotional tone of this visitor's feedback:
-            
-            FEEDBACK: "{feedback}"
-            PRAYER REQUEST: "{prayer_request}"
-            
-            Provide sentiment analysis as valid JSON only (no markdown) with these exact keys:
-            {{
-                "overall_sentiment": "Positive/Neutral/Negative",
-                "confidence": 0.85,
-                "key_emotions": ["list of detected emotions"],
-                "concerns": ["any concerns identified"],
-                "positive_indicators": ["positive aspects mentioned"]
-            }}
-            """
-            
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.models.generate_content(
-                    model=self.model, 
-                    contents=prompt,
-                    config={"temperature": self.temperature}
-                )
-            )
-            
-            parsed_response = self._extract_json_from_response(response.text)
-            
-            if parsed_response:
-                logger.debug(f"Sentiment analysis completed: {parsed_response}")
-                return parsed_response
-            else:
-                logger.warning("Failed to parse sentiment analysis response")
-                return self._create_fallback_sentiment_analysis()
-                
-        except Exception as e:
-            logger.error(f"Error performing sentiment analysis: {e}")
-            return self._create_fallback_sentiment_analysis()
-
-    async def _generate_recommendations(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
-        """
-        Generate structured recommendations for visitor follow-up using Gemini API.
+        logger.info(f"Validating content quality - length: {len(content)} characters")
         
-        Args:
-            visitor_context (VisitorContextData): Complete visitor context
-            
-        Returns:
-            Dict[str, Any]: Structured recommendations by category
-        """
-        try:
-            visitor_profile = visitor_context.visitor_profile or {}
-            welcome_form = visitor_context.visitor_welcome_form or {}
-            person_info = welcome_form.get('person_info', {})
-
-            available_teams = visitor_context.public_teams or []
-            available_groups = visitor_context.public_groups or []
-            upcoming_events = visitor_context.upcoming_events or []
-            
-            logger.debug(f"Generating recommendations with {len(available_teams)} teams, "
-                        f"{len(available_groups)} groups, {len(upcoming_events)} events")
-            
-            # Extract names from available opportunities
-            team_names = self._extract_opportunity_names(available_teams)
-            group_names = self._extract_opportunity_names(available_groups)
-            event_names = self._extract_opportunity_names(upcoming_events)
-            
-            prompt = f"""
-            Generate specific follow-up recommendations for this church visitor:
-
-            VISITOR INFO:
-            - Name: {person_info.get('first_name', '')} {person_info.get('middle_name', '')} {person_info.get('last_name', '')}
-            - First Time: {visitor_profile.get('first_time_visit', True)}
-            - Welcome Form: {json.dumps(welcome_form, indent=2, default=str)}
-
-            AVAILABLE OPPORTUNITIES:
-            Teams: {team_names}
-            Groups: {group_names}
-            Events: {event_names}
-
-            INSTRUCTIONS:
-            - If teams/groups/events are available, recommend specific ones by name
-            - If no specific opportunities are available, provide general recommendations
-            - Base recommendations on visitor's interests and feedback
-            - Consider prayer requests for personal needs
-            - For event_engagement, provide recommendations as a comma-separated string, not individual characters
-
-            Provide specific recommendations as valid JSON only (no markdown) with these exact keys:
-            {{
-                "community_integration": ["specific team or group suggestion"],
-                "event_engagement": "comma-separated list of specific event recommendations",
-                "personal_needs": "pastoral care suggestion based on prayer requests",
-                "feedback_insights": "church improvement suggestion based on feedback"
-            }}
-            """
-            
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.models.generate_content(
-                    model=self.model, 
-                    contents=prompt,
-                    config={"temperature": self.temperature}
-                )
-            )
-            
-            parsed_response = self._extract_json_from_response(response.text)
-            
-            if parsed_response:
-                logger.debug(f"Generated recommendations: {parsed_response}")
-                return parsed_response
-            else:
-                logger.warning("Failed to parse recommendations response")
-                return self._create_fallback_recommendations(team_names, group_names, event_names)
-                
-        except Exception as e:
-            logger.error(f"Error generating recommendations: {e}")
-            return {
-                "community_integration": ["Connect with a small group"],
-                "event_engagement": "Attend next Sunday service, Join upcoming church event",
-                "personal_needs": None,
-                "feedback_insights": None
-            }
-
-    
-    async def _determine_optimal_contact(
-        self, 
-        visitor_context: VisitorContextData, 
-        profile_analysis: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Determine the optimal contact strategy based on visitor preferences and profile.
+        if len(content) < 300:
+            issues.append("content_too_short")
+            score -= 0.2
+            logger.warning(f"Content too short: {len(content)} < 300 characters")
         
-        Args:
-            visitor_context (VisitorContextData): Complete visitor context
-            profile_analysis (Dict[str, Any]): Analyzed visitor profile
-            
-        Returns:
-            Dict[str, Any]: Optimal contact strategy
-        """
-        try:
-            welcome_form = visitor_context.visitor_welcome_form or {}
-            visit_info = welcome_form.get('visit_info', {})
-            
-            # Extract contact preferences
-            preferred_contact = visit_info.get('preferred_communication_method', 'email')
-            preferred_time = visit_info.get('best_contact_time', 'weekday_evening')
-            
-            # Map time preferences to readable format
-            time_mapping = {
-                'weekday_morning': 'Weekday mornings (9 AM - 12 PM)',
-                'weekday_afternoon': 'Weekday afternoons (1 PM - 5 PM)',
-                'weekday_evening': 'Weekday evenings (6 PM - 8 PM)',
-                'weekend_morning': 'Weekend mornings (9 AM - 12 PM)',
-                'weekend_afternoon': 'Weekend afternoons (1 PM - 5 PM)',
-                'weekend_evening': 'Weekend evenings (6 PM - 8 PM)'
-            }
-            
-            # Determine urgency based on profile analysis
-            urgency = "high" if profile_analysis.get('follow_up_priority') == "high" else "normal"
-            follow_up_days = 2 if urgency == "high" else 3
-            
-            return {
-                "method": preferred_contact,
-                "best_time": time_mapping.get(preferred_time, 'Weekday evenings (6 PM - 8 PM)'),
-                "urgency": urgency,
-                "follow_up_days": follow_up_days
-            }
-            
-        except Exception as e:
-            logger.error(f"Error determining optimal contact: {e}")
-            return {
-                "method": "email",
-                "best_time": "Weekday evenings (6 PM - 8 PM)",
-                "urgency": "normal",
-                "follow_up_days": 3
-            }
-    
-    def _get_data_sources_used(self, visitor_context: VisitorContextData) -> List[str]:
-        """Get list of data sources that were used in the analysis."""
-        sources = ['visitor_profile']
+        # More flexible section checking
+        required_sections = ["summary", "contact", "family", "recommendation"]
+        missing_sections = []
+        for section in required_sections:
+            if section.lower() not in content.lower():
+                issues.append(f"missing_section_{section.lower()}")
+                missing_sections.append(section)
+                score -= 0.15  # Reduced penalty
         
-        # Check each field and add to sources if present
-        if visitor_context.visitor_welcome_form:
-            sources.append('visitor_welcome_form')
-        if visitor_context.first_timer_notes:
-            sources.append('first_timer_notes')
-        if visitor_context.prayer_requests:
-            sources.append('prayer_requests')
-        if visitor_context.existing_followup_notes:
-            sources.append('existing_followup_notes')
-        if visitor_context.feedback_fields:
-            sources.append('feedback_fields')
-        if visitor_context.public_teams:
-            sources.append('public_teams')
-        if visitor_context.public_groups:
-            sources.append('public_groups')
-        if visitor_context.upcoming_events:
-            sources.append('upcoming_events')
-        if visitor_context.family_members:
-            sources.append('family_members')
+        if missing_sections:
+            logger.warning(f"Missing suggested sections: {missing_sections}")
         
-        return sources
+        if "[PLACEHOLDER]" in content or "TODO" in content:
+            issues.append("contains_placeholders")
+            score -= 0.4
+            logger.warning("Content contains placeholders")
+        
+        # Check if we have structured recommendations data instead of text sections
+        recommendations_data = data.get("recommended_next_steps")
+        if not recommendations_data and "recommendation" in [s.lower() for s in missing_sections]:
+            issues.append("invalid_recommendations_format")
+            score -= 0.1  # Reduced penalty since we have structured data
+            logger.warning("Missing recommendations in both content and structured format")
+        
+        final_score = max(0.0, score)
+        passed = final_score >= 0.6  # Lowered threshold
+        
+        logger.info(f"Quality validation result - Score: {final_score:.2f}, Passed: {passed}, Issues: {issues}")
+        
+        return QualityResult(
+            passed=passed,
+            score=final_score,
+            issues=issues
+        )
 
-    ## Util functions ##
-    def _determine_title(self, visitor_data: Dict[str, Any]) -> str:
-        """
-        Determine appropriate title based on visitor data.
-        
-        Args:
-            visitor_data: Consolidated visitor data
-            
-        Returns:
-            str: Appropriate title
-        """
-        title = visitor_data.get('title', '')
-        first_name = visitor_data.get('first_name', '')
-        
+    def _format_full_name(self, data: Dict[str, Any]) -> str:
+        return ' '.join(filter(None, [
+            data.get('title'),
+            data.get('first_name'),
+            data.get('middle_name'),
+            data.get('last_name')
+        ])).strip()
+
+    def _format_visit_date(self, date: Any) -> str:
+        if isinstance(date, datetime):
+            return date.strftime("%Y-%m-%d")
+        return str(date) if date else ""
+
+    def _format_visit_date_for_output(self, date: Any) -> str:
+        return date.isoformat() if isinstance(date, datetime) else str(date) if date else ""
+
+    def _determine_title(self, data: Dict[str, Any]) -> str:
+        title = data.get('title')
         if title:
             return title
-            
-        if not first_name or first_name == 'This visitor':
-            return "This visitor"
-            
-        # Fallback to neutral
-        return "This visitor"
+        first_name = data.get('first_name')
+        return first_name if first_name else "This visitor"
 
-    def _format_full_name(self, visitor_data: Dict[str, Any]) -> str:
-        """Format visitor's full name consistently."""
-        parts = [
-            visitor_data.get('title', ''),
-            visitor_data.get('first_name', ''),
-            visitor_data.get('middle_name', ''),
-            visitor_data.get('last_name', '')
-        ]
-        return ' '.join(part for part in parts if part).strip()
-
-    def _format_visit_date_for_output(self, visit_date: Any) -> str:
-        """Format visit date for output in AI note."""
-        if isinstance(visit_date, datetime):
-            return visit_date.isoformat()
-        return str(visit_date) if visit_date else ""
-
-    def _format_next_steps(
-        self,
-        church_integration_recs: list,
-        event_engagement_recs: list,
-        personal_needs_response: Union[dict, None],
-        feedback_insight: Union[dict, None]
-    ) -> dict:
-        """Format recommended next steps for service consumption."""
-
-        def extract_titles(recs):
-            titles = []
-            if not recs:
-                return titles
-            if isinstance(recs, str):
-                # Treat the whole string as one recommendation
-                titles.append(recs.strip())
-            elif isinstance(recs, list):
-                for rec in recs:
-                    if isinstance(rec, dict):
-                        title = rec.get("title") or rec.get("description")
-                        if title:
-                            titles.append(title.strip())
-                    elif isinstance(rec, str):
-                        titles.append(rec.strip())
-                    else:
-                        titles.append(str(rec).strip())
-            else:
-                titles.append(str(recs).strip())
-            return titles
-
-        church_integration_list = extract_titles(church_integration_recs)
-        event_engagement_list = extract_titles(event_engagement_recs)
-
-        personal_needs_list = []
-        if personal_needs_response:
-            if isinstance(personal_needs_response, dict):
-                summary = personal_needs_response.get("summary")
-                if summary:
-                    personal_needs_list.append(summary.strip())
-            else:
-                personal_needs_list.append(str(personal_needs_response).strip())
-
-        feedback_insights_list = []
-        if feedback_insight:
-            if isinstance(feedback_insight, dict):
-                action_step = feedback_insight.get("action_step")
-                if action_step:
-                    feedback_insights_list.append(action_step.strip())
-            else:
-                feedback_insights_list.append(str(feedback_insight).strip())
-
-        return {
-            "church_integration": church_integration_list,
-            "event_engagement": event_engagement_list,
-            "personal_needs": personal_needs_list,
-            "feedback_insights": feedback_insights_list
-        }
-
-    def _extract_opportunity_names(self, opportunities: List[Dict[str, Any]]) -> List[str]:
-        """
-        Extract names from opportunity data structures.
-        
-        Args:
-            opportunities: List of opportunity dictionaries
-            
-        Returns:
-            List[str]: Extracted names
-        """
-        names = []
+    def _extract_opportunity_names(self, items: List[Dict[str, Any]]) -> List[str]:
         name_fields = ['name', 'title', 'team_name', 'group_name', 'event_name']
-        
-        for item in opportunities:
+        names = []
+        for item in items:
             if isinstance(item, dict):
                 for field in name_fields:
                     if field in item and item[field]:
                         names.append(str(item[field]))
                         break
-                else:
-                    # If no name field found, use string representation
-                    names.append(str(item))
-            else:
-                names.append(str(item))
-        
         return names
 
     def _transform_recommendations(self, recs: List[Any], rec_type: str) -> List[Dict[str, Any]]:
-        """Transform recommendation data to match expected schema format."""
         result = []
         for rec in recs:
             if isinstance(rec, str):
-                result.append({
-                    "type": rec_type,
-                    "title": rec,
-                    "description": rec,
-                    "priority": "medium"
-                })
+                result.append({"type": rec_type, "title": rec, "description": rec, "priority": "medium"})
             elif isinstance(rec, dict):
                 result.append(rec)
         return result
 
-    def _format_visit_date(self, visit_date: Any) -> str:
-        """
-        Format visit date to string for schema compatibility.
-        
-        Args:
-            visit_date: Visit date value (could be datetime, string, or None)
-            
-        Returns:
-            str: Formatted date string
-        """
-        if not visit_date:
-            return ""
-        
-        if isinstance(visit_date, datetime):
-            return visit_date.strftime("%Y-%m-%d")
-        elif isinstance(visit_date, str):
-            return visit_date
-        else:
-            return str(visit_date)
+    def _process_personal_needs(self, data: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(data, str):
+            return {"type": "personal_needs", "summary": data, "action_required": True, "escalation_required": False}
+        return data if isinstance(data, dict) else None
 
-    def _extract_json_from_response(self, response_text: str) -> Optional[Dict[str, Any]]:
-        """
-        Extract JSON from Gemini API response with improved parsing.
-        
-        Args:
-            response_text (str): Raw response from Gemini API
-            
-        Returns:
-            Optional[Dict[str, Any]]: Parsed JSON data or None if parsing fails
-        """
-        if not response_text:
-            return None
-            
-        try:
-            # First try direct JSON parsing
-            return json.loads(response_text.strip())
-        except json.JSONDecodeError:
-            pass
-        
-        # Try to extract JSON from markdown code blocks
-        json_patterns = [
-            r'```(?:json)?\s*(\{.*?\})\s*```',
-            r'```(?:json)?\s*(\[.*?\])\s*```',
-            r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',
-            r'\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]'
+    def _process_feedback_insights(self, data: Any) -> Optional[Dict[str, Any]]:
+        if isinstance(data, str):
+            return {"type": "feedback_insight", "tone": "positive", "category": "general", "action_step": data}
+        return data if isinstance(data, dict) else None
+
+    def _format_next_steps(
+        self, church_recs, event_recs, personal, feedback
+    ) -> Dict[str, List[str]]:
+        def extract_titles(items):
+            titles = []
+            if isinstance(items, str):
+                titles.extend([s.strip() for s in items.split(",") if s.strip()])
+            elif isinstance(items, list):
+                for i in items:
+                    if isinstance(i, dict):
+                        titles.append((i.get("title") or i.get("description") or "").strip())
+                    else:
+                        titles.append(str(i).strip())
+            elif items:
+                titles.append(str(items).strip())
+            return titles
+
+        return {
+            "church_integration": extract_titles(church_recs),
+            "event_engagement": extract_titles(event_recs),
+            "personal_needs": extract_titles(personal) if personal else [],
+            "feedback_insights": extract_titles(feedback) if feedback else [],
+        }
+
+    def _get_data_sources_used(self, visitor_context: VisitorContextData) -> List[str]:
+        sources = ['visitor_profile']
+        fields = [
+            'visitor_welcome_form', 'first_timer_notes', 'prayer_requests',
+            'existing_followup_notes', 'feedback_fields', 'public_teams',
+            'public_groups', 'upcoming_events', 'family_members'
         ]
-        
-        for pattern in json_patterns:
-            matches = re.findall(pattern, response_text, re.DOTALL)
-            for match in matches:
-                try:
-                    return json.loads(match)
-                except json.JSONDecodeError:
-                    continue
-        
-        logger.warning(f"Failed to extract JSON from response: {response_text[:200]}...")
-        return None
+        for field in fields:
+            if getattr(visitor_context, field, None):
+                sources.append(field)
+        return sources
 
+    # --- FALLBACKS ---
 
-    # Fallback methods
-    def _create_fallback_note(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
-        """
-        Create a minimal fallback note when full processing fails.
-        
-        Args:
-            visitor_context: Original visitor context
-            
-        Returns:
-            Dict[str, Any]: Minimal AI note structure
-        """
-        visitor_profile = visitor_context.visitor_profile or {}
-        welcome_form = visitor_context.visitor_welcome_form or {}
-        person_info = welcome_form.get('person_info', {})
-        
-        return {
-            "visitor_full_name": f"{person_info.get('first_name', '')} {person_info.get('last_name', '')}".strip(),
-            "visitor_phone": person_info.get("phone", ""),
-            "visitor_email": person_info.get("email", ""),
-            "first_visit": str(welcome_form.get('visit_info', {}).get('visit_date', '')),
-            "best_contact_time": "Weekday evenings (6 PM - 8 PM)",
-            "channel_to_contact": "Email",
-            "key_interests_summary": ["General Fellowship"],
-            "family_context_info": "Individual visit",
-            "sentiment_analysis": {
-                "overall_sentiment": "Neutral",
-                "confidence": 0.5,
-                "key_emotions": ["Curious"],
-                "concerns": [],
-                "positive_indicators": []
-            },
-            "church_integration_recommendations": [],
-            "event_engagement_recommendations": [],
-            "personal_needs_response": None,
-            "feedback_insight": None,
-            "ai_generated_label": True,
-            "generation_timestamp": datetime.now(timezone.utc).isoformat(),
-            "person_id": str(person_info.get("id", "")),
-            "fam_id": "",
-            "raw_content": "Fallback note generated due to processing error.",
-            "natural_summary": "This visitor requires manual follow-up due to processing limitations.",
-            "confidence_score": 0.5,
-            "data_sources_used": ["visitor_profile"],
-            "recommended_next_steps": {
-                "church_integration": [],
-                "event_engagement": [],
-                "personal_needs": [],
-                "feedback_insights": []
-            }
-        }
-
-    def _create_fallback_recommendations(
-        self, 
-        team_names: List[str], 
-        group_names: List[str], 
-        event_names: List[str]
-    ) -> Dict[str, Any]:
-        """
-        Create fallback recommendations when AI generation fails.
-        
-        Args:
-            team_names: Available team names
-            group_names: Available group names
-            event_names: Available event names
-            
-        Returns:
-            Dict[str, Any]: Fallback recommendations
-        """
-        community_recs = team_names[:2] if team_names else group_names[:2] if group_names else ["Connect with a small group", "Explore volunteer opportunities"]
-        event_recs = event_names[:2] if event_names else ["Attend next Sunday service", "Join upcoming church event"]
-        
-        return {
-            "community_integration": community_recs,
-            "event_engagement": ", ".join(event_recs),  # Join as comma-separated string
-            "personal_needs": None,
-            "feedback_insights": None
-        }
-
-    def _create_fallback_profile_analysis(self) -> Dict[str, Any]:
-        """
-        Create fallback profile analysis when AI generation fails.
-        
-        Returns:
-            Dict[str, Any]: Fallback profile analysis
-        """
+    def _fallback_profile(self) -> Dict[str, Any]:
         return {
             "interests": ["General Fellowship"],
             "ministry_areas": ["Sunday Service"],
@@ -1140,17 +787,203 @@ class FollowupNoteAgent(BaseAgent):
             "follow_up_priority": "medium"
         }
 
-    def _create_fallback_sentiment_analysis(self) -> Dict[str, Any]:
-        """
-        Create fallback sentiment analysis when AI generation fails.
-        
-        Returns:
-            Dict[str, Any]: Fallback sentiment analysis
-        """
+    def _fallback_family(self, ctx: VisitorContextData) -> Dict[str, Any]:
         return {
-            "overall_sentiment": "Neutral",
+            "context": "Individual visit.",
+            "is_family": False,
+            "is_existing": False,
+            "member_count": 1,
+            "has_children": False,
+            "children_count": 0,
+        }
+
+    def _fallback_sentiment(self) -> Dict[str, Any]:
+        return {
+            "overall_sentiment": "neutral",
             "confidence": 0.5,
             "key_emotions": ["Curious"],
             "concerns": [],
             "positive_indicators": []
+        }
+
+    def _fallback_recommendations(self, ctx: VisitorContextData) -> Dict[str, Any]:
+        teams = self._extract_opportunity_names(ctx.public_teams or [])
+        groups = self._extract_opportunity_names(ctx.public_groups or [])
+        events = self._extract_opportunity_names(ctx.upcoming_events or [])
+        return {
+            "community_integration": teams[:2] or groups[:2] or ["Connect with a small group"],
+            "event_engagement": events[:2] or ["Attend next Sunday service"],
+            "personal_needs": {"identified_needs": ["General spiritual growth"]},
+            "feedback_insights": {"key_takeaways": ["New visitor seeking community"]}
+        }
+
+    def _create_fallback_note(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
+        welcome_form = visitor_context.visitor_welcome_form or {}
+        person_info = welcome_form.get('person_info', {})
+        return {
+            "visitor_full_name": f"{person_info.get('first_name', '')} {person_info.get('last_name', '')}".strip(),
+            "visitor_phone": person_info.get("phone", ""),
+            "visitor_email": person_info.get("email", ""),
+            "first_visit": str(welcome_form.get('visit_info', {}).get('visit_date', '')),
+            "best_contact_time": "Weekday evenings (6 PM - 8 PM)",
+            "channel_to_contact": "Email",
+            "key_interests_summary": ["General Fellowship"],
+            "family_context_info": "Individual visit",
+            "sentiment_analysis": self._fallback_sentiment(),
+            "church_integration_recommendations": [],
+            "event_engagement_recommendations": [],
+            "personal_needs_response": None,
+            "feedback_insight": None,
+            "ai_generated_label": True,
+            "generation_timestamp": datetime.now(timezone.utc).isoformat(),
+            "person_id": str(person_info.get("id", "")),
+            "fam_id": "",
+            "raw_content": "Fallback note due to processing error.",
+            "natural_summary": "This visitor requires manual follow-up.",
+            "confidence_score": 0.5,
+            "data_sources_used": ["visitor_profile"],
+            "recommended_next_steps": {
+                "church_integration": [],
+                "event_engagement": [],
+                "personal_needs": [],
+                "feedback_insights": []
+            }
+        }
+
+    # --- VALIDATIONS ---
+
+    def _validate_recommendations(self, recs: Optional[Dict[str, Any]]) -> bool:
+        if not recs:
+            return False
+        expected = ['community_integration', 'event_engagement', 'personal_needs', 'feedback_insights']
+        return any(k in recs for k in expected)
+
+    def _validate_sentiment_analysis(self, analysis: Optional[Dict[str, Any]]) -> bool:
+        if not analysis:
+            return False
+        return "overall_sentiment" in analysis and "confidence" in analysis
+
+
+###Visitor Snapshot Fuctions####
+
+    async def generate_visitor_snapshot_summary(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
+        """
+        Generate a concise visitor snapshot summary for the visitor snapshot feature.
+        
+        Args:
+            visitor_context (VisitorContextData): Complete visitor context information
+        
+        Returns:
+            Dict[str, Any]: Structured summary with natural language description
+        """
+        try:
+            # Extract visitor data
+            visitor_data = self._extract_visitor_data(visitor_context)
+            
+            # Perform lightweight analysis for snapshot
+            profile_analysis = await self._analyze_visitor_profile(visitor_context)
+            family_analysis = await self._analyze_family_context(visitor_context)
+            sentiment_analysis = await self._perform_sentiment_analysis(visitor_context)
+            
+            # Create concise natural summary for snapshot
+            natural_summary = self._create_snapshot_summary(
+                visitor_data, profile_analysis, family_analysis, sentiment_analysis
+            )
+            
+            # Return structured data
+            return {
+                "natural_summary": natural_summary,
+                "sentiment_classification": sentiment_analysis.get("overall_sentiment", "Neutral"),
+                "key_interests": profile_analysis.get("interests", []),
+                "family_context": family_analysis.get("context", ""),
+                "confidence_score": sentiment_analysis.get("confidence", 0.85)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating visitor snapshot summary: {e}")
+            return self._create_fallback_snapshot_summary(visitor_context)
+    
+    def _create_snapshot_summary(
+        self, 
+        visitor_data: Dict[str, Any], 
+        profile_analysis: Dict[str, Any], 
+        family_analysis: Dict[str, Any], 
+        sentiment_analysis: Dict[str, Any]
+    ) -> str:
+        """
+        Create a concise snapshot summary for the visitor.
+        
+        Args:
+            visitor_data: Consolidated visitor data
+            profile_analysis: Analyzed visitor interests and characteristics
+            family_analysis: Family context information
+            sentiment_analysis: Emotional sentiment analysis
+            
+        Returns:
+            str: Concise natural language summary
+        """
+        first_name = visitor_data.get('first_name', 'This visitor')
+        
+        summary_parts = []
+        
+        # Basic introduction
+        if family_analysis.get('is_family', False):
+            if family_analysis.get('has_children', False):
+                summary_parts.append(f"{first_name} visited with their family, including children.")
+            else:
+                summary_parts.append(f"{first_name} visited with their family.")
+        else:
+            summary_parts.append(f"{first_name} is a new visitor to our church.")
+        
+        # Add key interests if available - FIX: Handle None values in interests
+        interests = profile_analysis.get('interests', [])
+        if interests and len(interests) > 0:
+            # Filter out None values and ensure all items are strings with safe strip checking
+            valid_interests = []
+            for interest in interests:
+                if interest is not None:
+                    interest_str = str(interest)
+                    if interest_str and interest_str.strip():
+                        valid_interests.append(interest_str.strip().lower())
+            
+            if valid_interests:
+                if len(valid_interests) == 1:
+                    summary_parts.append(f"They showed interest in {valid_interests[0]}.")
+                else:
+                    summary_parts.append(f"They expressed interest in {', '.join(valid_interests[:2])}.")
+        
+        # Add sentiment context
+        sentiment = sentiment_analysis.get('overall_sentiment', 'neutral')
+        if sentiment == 'positive':
+            summary_parts.append("They had a positive experience and seem engaged.")
+        elif sentiment == 'negative':
+            summary_parts.append("They had some concerns that may need follow-up.")
+        # Add how they heard about church if available #TODO: map data correctly from welcome form 
+        how_heard = visitor_data.get('how_heard_about_church', '')
+        if how_heard and how_heard is not None:
+            how_heard_str = str(how_heard)
+            if how_heard_str and how_heard_str.strip() and how_heard_str.lower() != 'none':
+                summary_parts.append(f"They found us through {how_heard_str.strip().lower()}.")
+        
+        return " ".join(summary_parts)
+    
+    def _create_fallback_snapshot_summary(self, visitor_context: VisitorContextData) -> Dict[str, Any]:
+        """
+        Create a fallback snapshot summary when AI generation fails.
+        
+        Args:
+            visitor_context: The visitor context data
+            
+        Returns:
+            Dict[str, Any]: Basic fallback summary
+        """
+        visitor_profile = visitor_context.visitor_profile or {}
+        first_name = visitor_profile.get('first_name', 'This visitor')
+        
+        return {
+            "natural_summary": f"{first_name} is a new visitor to our church community. We look forward to connecting with them further.",
+            "sentiment_classification": "Neutral",
+            "key_interests": ["General Fellowship"],
+            "family_context": "Individual visit",
+            "confidence_score": 0.5
         }

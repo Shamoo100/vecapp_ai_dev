@@ -3,7 +3,8 @@ Event schemas for visitor follow-up note generation system.
 Defines the structure for SQS events based on real production data.
 Updated to handle dynamic visitor welcome form scenarios.
 """
-from pydantic import BaseModel, Field, validator
+from dataclasses import dataclass
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional, List, Literal, Dict, Any
 from datetime import datetime, timezone
 from enum import Enum
@@ -69,21 +70,28 @@ class VisitorEventData(BaseModel):
     
     # Optional family members (for family context scenarios)
     new_family_members_id: Optional[List[str]] = Field(
-        default_factory=list, 
+        default_factory=list,
+        alias="new_family_member", 
         description="List of new family member IDs (when family_context=family)"
     )
     
     # Event metadata (optional, may not be present in all messages)
     timestamp: Optional[datetime] = Field(None, description="Event timestamp")
     event_type: Optional[str] = Field(None, description="Type of event")
+
+    class Config:
+        """Pydantic configuration for model behavior"""
+        allow_population_by_field_name = True
+        use_enum_values = True
     
-    @validator('fam_head_id', 'fam_id')
-    def validate_family_relationships(cls, v, values):
+    @field_validator('fam_head_id', 'fam_id')
+    @classmethod
+    def validate_family_relationships(cls, v, info):
         """Validate family relationships based on scenarios"""
-        if 'family_context' in values and 'family_history' in values and 'person_id' in values:
-            family_context = values['family_context']
-            family_history = values['family_history']
-            person_id = values['person_id']
+        if info.data and all(key in info.data for key in ['family_context', 'family_history', 'person_id']):
+            family_context = info.data['family_context']
+            family_history = info.data['family_history']
+            person_id = info.data['person_id']
             
             # Scenario 1: individual + new = fam_head_id = person_id (fam_id is always different)
             if family_context == FamilyContext.INDIVIDUAL and family_history == FamilyHistory.NEW:
@@ -91,7 +99,7 @@ class VisitorEventData(BaseModel):
                     # This is expected for scenario 1
                     pass
             
-            # Scenario 2: individual + existing = fam_id exists, fam_head_id != person_id
+            # Scenario 2: individual + existing family = fam_id exists, fam_head_id != person_id
             elif family_context == FamilyContext.INDIVIDUAL and family_history == FamilyHistory.EXISTING:
                 # fam_head_id should be different from person_id
                 pass
@@ -182,7 +190,7 @@ class DataCollectionRequirements(BaseModel):
     filter_by_demographics: bool = Field(True, description="Filter recommendations by demographics")
     respect_visibility_rules: bool = Field(True, description="Respect visibility and life stage rules")
 
-
+#TODO: Move to notes schemas
 class AIGeneratedNoteStructure(BaseModel):
     """
     Structure for AI-generated notes based on acceptance criteria.
@@ -407,48 +415,6 @@ class VisitorContextData(BaseModel):
         description="Applied tenant-specific business rules"
     )
 
-
-class AINoteFeedback(BaseModel):
-    """
-    Schema for admin feedback on AI-generated notes.
-    Based on acceptance criteria feedback requirements.
-    """
-    note_id: str = Field(..., description="ID of the AI-generated note")
-    person_id: str = Field(..., description="Person ID the note relates to")
-    task_id: str = Field(..., description="Task ID the note relates to")
-    
-    # Feedback fields
-    was_helpful: Literal["yes", "no", "partially"] = Field(
-        ..., 
-        description="Was this recommendation helpful?"
-    )
-    feedback_comments: Optional[str] = Field(
-        None,
-        description="Additional feedback comments from admin"
-    )
-    
-    # Specific recommendation feedback
-    church_integration_feedback: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Feedback on church integration recommendations"
-    )
-    event_engagement_feedback: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Feedback on event engagement recommendations"
-    )
-    personal_needs_feedback: Optional[Dict[str, Any]] = Field(
-        None,
-        description="Feedback on personal needs response"
-    )
-    
-    # Metadata
-    feedback_timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
-        description="When feedback was provided"
-    )
-    admin_id: str = Field(..., description="ID of admin providing feedback")
-
-
 class AIGenerationError(BaseModel):
     """
     Schema for AI generation errors.
@@ -475,3 +441,17 @@ class AIGenerationError(BaseModel):
         None,
         description="Stack trace for debugging (admin only)"
     )
+
+@dataclass
+class AISummaryResult:
+    """Typed contract for AI summary generation results."""
+    ok: bool
+    reason: Optional[str] = None                 # "provider_timeout" | "quality_gate_failed" | "provider_error"
+    summary: Optional[str] = None                # final admin-facing note content
+    recommendations: Optional[List[Dict]] = None # structured recommendations
+    quality_score: Optional[float] = None
+    provider_meta: Dict[str, Any] = None         # model, tokens, latency, etc.
+    
+    def __post_init__(self):
+        if self.provider_meta is None:
+            self.provider_meta = {}

@@ -8,7 +8,7 @@ orchestrates the calendar repository for database access.
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.data.interfaces.calendar_service_interface import ICalendarService
 from app.data.repositories.calendar_service_repository import CalendarRepository
@@ -225,19 +225,34 @@ class CalendarService:
         """Calculate days until event."""
         if not event_datetime:
             return -1
-        return (event_datetime.date() - datetime.now().date()).days
+        # Use timezone-aware datetime for comparison
+        now = datetime.now(timezone.utc)
+        # Ensure event_datetime is timezone-aware
+        if event_datetime.tzinfo is None:
+            event_datetime = event_datetime.replace(tzinfo=timezone.utc)
+        return (event_datetime.date() - now.date()).days
     
     def _is_today(self, event_datetime: datetime) -> bool:
         """Check if event is today."""
         if not event_datetime:
             return False
-        return event_datetime.date() == datetime.now().date()
+        # Use timezone-aware datetime for comparison
+        now = datetime.now(timezone.utc)
+        # Ensure event_datetime is timezone-aware
+        if event_datetime.tzinfo is None:
+            event_datetime = event_datetime.replace(tzinfo=timezone.utc)
+        return event_datetime.date() == now.date()
     
     def _is_this_week(self, event_datetime: datetime) -> bool:
         """Check if event is this week."""
         if not event_datetime:
             return False
-        today = datetime.now().date()
+        # Use timezone-aware datetime for comparison
+        now = datetime.now(timezone.utc)
+        # Ensure event_datetime is timezone-aware
+        if event_datetime.tzinfo is None:
+            event_datetime = event_datetime.replace(tzinfo=timezone.utc)
+        today = now.date()
         days_until_sunday = (6 - today.weekday()) % 7
         week_end = today + timedelta(days=days_until_sunday)
         week_start = week_end - timedelta(days=6)
@@ -247,7 +262,12 @@ class CalendarService:
         """Check if event is in the past."""
         if not end_time:
             return False
-        return end_time < datetime.now()
+        # Use timezone-aware datetime for comparison
+        now = datetime.now(timezone.utc)
+        # Ensure end_time is timezone-aware
+        if end_time.tzinfo is None:
+            end_time = end_time.replace(tzinfo=timezone.utc)
+        return end_time < now
     
     def _calculate_duration_hours(self, start: datetime, end: datetime) -> float:
         """Calculate event duration in hours."""
@@ -315,9 +335,9 @@ class CalendarService:
                     **category,
                     'total_events': len(category_events),
                     'upcoming_events': len([e for e in category_events 
-                                          if e.get('start_time') and e['start_time'] > datetime.now()]),
+                                          if e.get('start_time') and e['start_time'] > datetime.now(timezone.utc)]),
                     'past_events': len([e for e in category_events 
-                                      if e.get('end_time') and e['end_time'] < datetime.now()]),
+                                      if e.get('end_time') and e['end_time'] < datetime.now(timezone.utc)]),
                     'most_recent_event': max([e.get('start_time') for e in category_events], 
                                            default=None),
                     'average_attendance': self._calculate_average_attendance(category_events),

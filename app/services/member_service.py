@@ -5,13 +5,14 @@ This service provides business logic for member data operations and
 orchestrates the member repository for database access.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from uuid import UUID
 import logging
 from datetime import datetime, timedelta, timezone
 
 from app.data.interfaces.member_service_interface import IMemberRepository
 from app.data.repositories.member_service_repository import MemberRepository
+from app.data.models.member_service_models import PersonProfile, FamilyMember, PersonNote, FollowUpTask, PrayerRequest, PersonFeedback, PersonDecision, JourneyReportData
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class MemberService:
     a clean interface for AI agents and other services to access member data.
     """
     
-    def __init__(self, schema_name: str, member_repository: Optional[IMemberRepository] = None):
+    def __init__(self, schema_name: str, repository: Optional[IMemberRepository] = None):
         """
         Initialize the member service.
         
@@ -33,7 +34,7 @@ class MemberService:
             member_repository: Optional repository injection for testing
         """
         self.schema_name = schema_name
-        self._repository = member_repository or MemberRepository(schema_name)
+        self._repository = repository or MemberRepository(schema_name)
     
     async def initialize(self) -> None:
         """Initialize the service and its dependencies."""
@@ -45,187 +46,60 @@ class MemberService:
         await self._repository.close()
         logger.info("Member service closed")
     
-    async def get_member_profile(self, person_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Get comprehensive member profile including family information.
+#==============Business logic methods for member operations========================#
+    #TODO: fetch church info for better context for ai
+    # async def get_church_info(self) -> Dict[str, Any]:
+    #     """
+    #     Get church information.
         
-        Args:
-            person_id: The person's unique identifier (string for SQS compatibility)
-            
-        Returns:
-            Enhanced member profile with family context
-        """
+    #     Returns:
+    #         Dictionary containing church information
+    #     """
+    #     return await self._repository.get_church_info()
+
+    
+
+    async def get_person_profile(self, person_id: UUID) -> Optional[PersonProfile]:
+
         try:
-            # Convert string to UUID if needed
+                # Convert string to UUID if needed
             if isinstance(person_id, str):
-                person_id = UUID(person_id)
-                
+                    person_id = UUID(person_id)
             person = await self._repository.get_person_by_id(person_id)
             if not person:
                 return None
-            
-            # Enhance with family members if family ID exists
-            if person.get('fam_id'):
-                family_members = await self._repository.get_family_members(person['fam_id'])
-                person['family_members'] = family_members
-            
-            # Add recent notes
-            recent_notes = await self._repository.get_person_notes(person_id, limit=10)
-            person['recent_notes'] = recent_notes
-            
+            if person.fam_id:
+                members = await self._repository.get_family_members(person.fam_id)
+                # enrich immutably
+                person = person.model_copy(update={"family_members": members})
             return person
-            
+        
         except Exception as e:
             logger.error(f"Error getting member profile for {person_id}: {str(e)}")
             raise
-    
-    #preliminary implementation of the geet visitor snapshot requirement 
-    #TODO:Implement this for visitor snapshot
-    # async def get_visitor_insights(self, limit: int = 100) -> Dict[str, Any]:
-    #     """
-    #     Get visitor data with insights for AI processing.
-        
-    #     Args:
-    #         limit: Maximum number of visitors to return
-            
-    #     Returns:
-    #         Dictionary containing visitors and insights
-    #     """
-    #     try:
-    #         visitors = await self._repository.get_visitors(limit)
-            
-    #         # Add business logic insights
-    #         insights = {
-    #             'total_visitors': len(visitors),
-    #             'recent_visitors_30_days': len([v for v in visitors 
-    #                                           if self._is_recent(v.get('created_at'), 30)]),
-    #             'visitors_with_families': len([v for v in visitors if v.get('fam_id')]),
-    #             'visitors_by_join_method': self._group_by_join_method(visitors)
-    #         }
-            
-    #         return {
-    #             'visitors': visitors,
-    #             'insights': insights
-    #         }
-            
-    #     except Exception as e:
-    #         logger.error(f"Error getting visitor insights: {str(e)}")
-    #         raise
-    
-    async def get_family_context(self, fam_id: UUID) -> Dict[str, Any]:
-        """
-        Get comprehensive family context for AI agents.
-        
-        Args:
-            fam_id: The family's unique identifier
-            
-        Returns:
-            Family context with member relationships
-        """
+
+    async def get_family_members(self, fam_id: UUID) -> List[FamilyMember]:    
         try:
-            family_members = await self._repository.get_family_members(fam_id)
-            
-            # Add family insights
-            family_context = {
-                'family_id': fam_id,
-                'members': family_members,
-                'total_members': len(family_members),
-                'member_types': self._analyze_member_types(family_members),
-                'age_distribution': self._analyze_age_distribution(family_members)
-            }
-            
-            return family_context
-            
+            if isinstance(fam_id, str):
+                fam_id = UUID(fam_id)
+            return await self._repository.get_family_members(fam_id)
         except Exception as e:
-            logger.error(f"Error getting family context for {fam_id}: {str(e)}")
-            raise
-    
-    async def create_member_note(self, note_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Create a note with enhanced business logic validation for AI-generated notes.
-        
-        Args:
-            note_data: Dictionary containing note information
-            
-        Returns:
-            Created note with metadata
-        """
-        try:
-            # Enhanced validation for required fields - task_id is optional
-            required_fields = ['person_id', 'title', 'notes_body', 'type', 'meta']
-            missing_fields = [field for field in required_fields if not note_data.get(field)]
-            
-            if missing_fields:
-                raise ValueError(f"Required fields missing: {', '.join(missing_fields)}")
-            
-            # Validate UUIDs
-            try:
-                if note_data.get('person_id'):
-                    UUID(str(note_data['person_id']))
-                if note_data.get('recipient_id'):
-                    UUID(str(note_data['recipient_id']))
-                if note_data.get('recipient_fam_id'):
-                    UUID(str(note_data['recipient_fam_id']))
-            except ValueError as e:
-                raise ValueError(f"Invalid UUID format: {str(e)}")
-            
-            # Enhance note data with service metadata
-            enhanced_note_data = {
-                **note_data,
-                'created_by_service': 'ai_service',
-                # Preserve existing meta and add service metadata
-                'meta': {
-                    'service_metadata': {
-                        'created_by_service': 'ai_service',
-                        'service_version': '1.0',
-                        'created_at': datetime.now(timezone.utc).isoformat()
-                    },
-                    **note_data.get('meta', {})
-                }
-            }
-            
-            # Create note via repository
-            created_note = await self._repository.create_note(enhanced_note_data)
-            
-            if not created_note:
-                raise ValueError("Failed to create note - no data returned")
-            
-            logger.info(
-                f"AI note created successfully - ID: {created_note.get('id')}, "
-                f"Person: {note_data['person_id']}, Type: {note_data['type']}"
-            )
-            
-            return created_note
-            
-        except Exception as e:
-            logger.error(f"Error creating member note: {str(e)}")
+            logger.error(f"Error getting family members for {fam_id}: {str(e)}")
             raise
 
-    async def get_task_context(self, task_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Get task context with related member information.
-        
-        Args:
-            task_id: The task's unique identifier
-            
-        Returns:
-            Task context with member details
-        """
-        try:
-            task = await self._repository.get_task_by_id(task_id)
-            if not task:
-                return None
-            
-            # Enhance with recipient information if available
-            if task.get('recipient_id'):
-                recipient = await self._repository.get_person_by_id(task['recipient_id'])
-                task['recipient_details'] = recipient
-            
-            return task
-            
-        except Exception as e:
-            logger.error(f"Error getting task context for {task_id}: {str(e)}")
-            raise
+
+    async def get_family_members_profiles(self, member_ids: List[str]) -> List[PersonProfile]:
+
+        return await self._repository.get_family_members_profiles(member_ids)
+    
+    
+
+    async def search_persons(self, search_term: str, limit: int = 50) -> List[PersonProfile]:
+        return await self._repository.search_persons(search_term, limit)
+
+    async def get_person_by_email(self, email: str) -> Optional[PersonProfile]:
+        return await self._repository.get_person_by_email(email)
+
 
     async def get_visitor_welcome_form_data(self, person_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -235,15 +109,15 @@ class MemberService:
             person_id: The person's unique identifier (string for SQS compatibility)
             
         Returns:
-            Complete welcome form data dictionary or None if not found
+            Complete Enhanced welcome form data dictionary or None if not found
         """
         try:
             # Convert string to UUID if needed
             if isinstance(person_id, str):
-                person_id = UUID(person_id)
+                person_uuid = UUID(person_id)
                 
             # Get welcome form data from repository
-            welcome_form_data = await self._repository.get_visitor_welcome_form_data(person_id)
+            welcome_form_data = await self._repository.get_visitor_welcome_form_data(person_uuid)
             
             if not welcome_form_data:
                 return None
@@ -309,6 +183,100 @@ class MemberService:
             logger.error(f"Error getting visitor welcome form data for {person_id}: {str(e)}")
             raise
 
+
+    async def get_recent_visitors(self, days: int = 30, limit: int = 100) -> List[PersonProfile]:
+        return await self._repository.get_recent_visitors(days, limit)
+    
+    async def get_visitors_by_date_range(self, start_date: datetime, end_date: datetime, limit: int = 100) -> List[PersonProfile]:
+        return await self._repository.get_visitors_by_date_range(start_date, end_date)
+
+    async def get_new_individual_added_to_existing_family(self, person_id: UUID, fam_id: UUID) -> Optional[PersonProfile]:
+        return await self._repository.get_new_individual_added_to_existing_family(person_id, fam_id)
+
+    
+    
+    ##Notes
+    async def create_note(self, note_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a note with enhanced business logic validation for AI-generated notes.
+        
+        Args:
+            note_data: Dictionary containing note information
+            
+        Returns:
+            Created note with metadata
+        """
+        try:
+            # Enhanced validation for required fields - task_id is optional
+            required_fields = ['person_id', 'title', 'notes_body', 'type', 'meta']
+            missing_fields = [field for field in required_fields if not note_data.get(field)]
+            
+            if missing_fields:
+                raise ValueError(f"Required fields missing: {', '.join(missing_fields)}")
+            
+            # Validate UUIDs
+            try:
+                if note_data.get('person_id'):
+                    UUID(str(note_data['person_id']))
+                if note_data.get('recipient_id'):
+                    UUID(str(note_data['recipient_id']))
+                if note_data.get('recipient_fam_id'):
+                    UUID(str(note_data['recipient_fam_id']))
+            except ValueError as e:
+                raise ValueError(f"Invalid UUID format: {str(e)}")
+
+            # CRITICAL: Add schema validation to prevent cross-tenant contamination
+            if not self._repository.schema_name:
+                raise ValueError("Schema name not set - potential data contamination risk")
+            
+            logger.info(f"Creating note for person {note_data.get('person_id')} in schema {self._repository.schema_name}")
+            
+            # Enhance note data with service metadata
+            enhanced_note_data = {
+                **note_data,
+                'created_by_service': 'ai_service',
+                'schema_name': self._repository.schema_name,
+                # Preserve existing meta and add service metadata
+                'meta': {
+                    'service_metadata': {
+                        'created_by_service': 'ai_service',
+                        'service_version': '1.0',
+                        'created_at': datetime.now(timezone.utc).isoformat()
+                    },
+                    **note_data.get('meta', {})
+                }
+            }
+            # Call repository with enhanced validation
+            result = await self._repository.create_note(enhanced_note_data)
+            
+            # # Create note via repository
+            # created_note = await self._repository.create_note(enhanced_note_data)
+            
+            # if not created_note:
+            #     raise ValueError("Failed to create note - no data returned")
+            
+            logger.info(
+                f"AI note created successfully - ID: {result.get('id')}, in schema: {self._repository.schema_name}, "
+                f"Person: {note_data['person_id']}, Type: {note_data['type']}"
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error creating member note in schema {self._repository.schema_name}: {str(e)}")
+            raise
+    
+    async def get_person_notes(self, person_id: UUID, limit: int = 20) -> List[PersonNote]:
+        return await self._repository.get_person_notes(person_id=person_id, limit=limit)
+
+    
+    async def get_updated_person_data(self, person_id: UUID, since: datetime) -> List[PersonProfile]:
+        return await self._repository.get_updated_person_data(person_id, since)
+
+    
+    async def get_updated_notes(self, since: datetime) -> List[PersonNote]:
+        return await self._repository.get_updated_notes(since)
+
     async def get_prayer_requests(self, person_id: str) -> List[Dict[str, Any]]:
         """
         Get prayer requests for a specific person using title-based filtering.
@@ -322,7 +290,7 @@ class MemberService:
         try:
             # Convert string to UUID if needed
             if isinstance(person_id, str):
-                person_id = UUID(person_id)
+                person_uuid = UUID(person_id)
                 
             # Get notes with prayer-related titles
             prayer_title_patterns = [
@@ -333,7 +301,7 @@ class MemberService:
             ]
             
             prayer_notes = await self._repository.get_notes_by_title_pattern(
-                person_id, 
+                person_uuid, 
                 prayer_title_patterns, 
                 limit=20
             )
@@ -342,10 +310,10 @@ class MemberService:
             enhanced_prayers = []
             for note in prayer_notes:
                 enhanced_note = {
-                    **note,
+                    **(note if isinstance(note, dict) else {}),
                     'request_type': 'prayer',
-                    'urgency': self._assess_prayer_urgency(note.get('notes_body', '')),
-                    'category': self._categorize_prayer_request(note.get('notes_body', ''))
+                    'urgency': self._assess_prayer_urgency(note.notes_body or ""),
+                    'category': self._categorize_prayer_request(note.notes_body or "")
                 }
                 enhanced_prayers.append(enhanced_note)
             
@@ -368,7 +336,7 @@ class MemberService:
         try:
             # Convert string to UUID if needed
             if isinstance(person_id, str):
-                person_id = UUID(person_id)
+                person_uuid = UUID(person_id)
                 
             # Get notes with first-timer related titles
             first_timer_patterns = [
@@ -380,7 +348,7 @@ class MemberService:
             ]
             
             first_timer_notes = await self._repository.get_notes_by_title_pattern(
-                person_id,
+                person_uuid,
                 first_timer_patterns,
                 limit=10
             )
@@ -389,10 +357,10 @@ class MemberService:
             enhanced_notes = []
             for note in first_timer_notes:
                 enhanced_note = {
-                    **note,
+                     **(note if isinstance(note, dict) else {}),
                     'note_type': 'first_timer',
-                    'relevance_score': self._calculate_first_timer_relevance(note.get('notes_body', '')),
-                    'visit_context': self._extract_visit_context(note.get('notes_body', ''))
+                    'relevance_score': self._calculate_first_timer_relevance(note.notes_body or ""),
+                    'visit_context': self._extract_visit_context(note.notes_body or " ")
                 }
                 enhanced_notes.append(enhanced_note)
             
@@ -415,7 +383,7 @@ class MemberService:
         try:
             # Convert string to UUID if needed
             if isinstance(person_id, str):
-                person_id = UUID(person_id)
+                person_uuid = UUID(person_id)
                 
             # Get notes with feedback-related titles
             feedback_patterns = [
@@ -428,7 +396,7 @@ class MemberService:
             ]
             
             feedback_notes = await self._repository.get_notes_by_title_pattern(
-                person_id,
+                person_uuid,
                 feedback_patterns,
                 limit=15
             )
@@ -437,9 +405,9 @@ class MemberService:
             enhanced_feedback = []
             for note in feedback_notes:
                 enhanced_note = {
-                    **note,
-                    'feedback_type': self._categorize_feedback_type(note.get('notes_body', '')),
-                    'sentiment': self._analyze_feedback_sentiment(note.get('notes_body', '')),
+                     **(note if isinstance(note, dict) else {}),
+                    'feedback_type': self._categorize_feedback_type(note.notes_body or ""),
+                    'sentiment': self._analyze_feedback_sentiment(note.notes_body or ""),
                     'note_type': 'feedback'
                 }
                 enhanced_feedback.append(enhanced_note)
@@ -450,46 +418,17 @@ class MemberService:
             logger.error(f"Error getting feedback fields for {person_id}: {str(e)}")
             raise
 
-    async def get_family_members_profiles(self, member_ids: List[str]) -> List[Dict[str, Any]]:
-        """
-        Get detailed profiles for multiple family members by their IDs.
-        
-        Args:
-            member_ids: List of person IDs (as strings for SQS compatibility)
-            
-        Returns:
-            List of enhanced member profiles with family context
-        """
-        try:
-            if not member_ids:
-                return []
-            
-            # Get profiles from repository
-            profiles = await self._repository.get_family_members_profiles(member_ids)
-            
-            # Enhance each profile with additional context
-            enhanced_profiles = []
-            for profile in profiles:
-                # Add recent notes for context
-                try:
-                    person_id = UUID(str(profile['id']))
-                    recent_notes = await self._repository.get_person_notes(person_id, limit=5)
-                    profile['recent_notes'] = recent_notes
-                    profile['engagement_level'] = self._assess_member_engagement(recent_notes)
-                    profile['age_group'] = self._categorize_age_group(profile.get('dob'))
-                except Exception as e:
-                    logger.warning(f"Could not enhance profile for {profile.get('id')}: {str(e)}")
-                    profile['recent_notes'] = []
-                    profile['engagement_level'] = 'unknown'
-                    profile['age_group'] = 'unknown'
-                
-                enhanced_profiles.append(profile)
-            
-            return enhanced_profiles
-            
-        except Exception as e:
-            logger.error(f"Error getting family members profiles: {str(e)}")
-            raise
+
+    ##   # Private helper methods for business logic
+
+    def _extract_visit_context(self, note_content: str) -> str:
+        """Extract visit context from note content."""
+        visit_keywords = ['first visit', 'new visitor', 'welcome', 'church event']
+        for keyword in visit_keywords:
+            if keyword in note_content.lower():
+                return keyword
+        return 'general'
+
 
     def _categorize_feedback_type(self, note_content: str) -> str:
         """Categorize feedback type from note content."""
@@ -590,10 +529,10 @@ class MemberService:
         negative_keywords = ['disengaged', 'uninterested', 'inactive', 'distant']
         
         positive_count = sum(1 for note in notes 
-                           if any(keyword in note.get('note', '').lower() 
+                            if any(keyword in note.get('note', '').lower() 
                                 for keyword in positive_keywords))
         negative_count = sum(1 for note in notes 
-                           if any(keyword in note.get('note', '').lower() 
+                            if any(keyword in note.get('note', '').lower() 
                                 for keyword in negative_keywords))
         
         if positive_count > negative_count:
@@ -752,44 +691,77 @@ class MemberService:
         """Calculate age from date of birth."""
         today = datetime.now(timezone.utc).date()
         if isinstance(dob, datetime):
-            dob = dob.date()
+            dob = datetime.combine(dob.date(), datetime.min.time())
         return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
-    def _is_recent(self, date_value: Optional[datetime], days_threshold: int = 30) -> bool:
+    def _is_recent(self, date_value: Union[datetime, str, None], days_threshold: int = 30) -> bool:
         """
         Check if a date is within the specified threshold of days from now.
-        
+
         Args:
-            date_value: The datetime to check (can be timezone-aware or naive)
+            date_value: The datetime to check (can be timezone-aware, naive, or ISO string)
             days_threshold: Number of days to consider as recent
-            
+
         Returns:
             True if the date is recent, False otherwise
         """
         if not date_value:
             return False
-        
+
         try:
-            # Handle string conversion if needed
+            # Handle string input
             if isinstance(date_value, str):
-                date_value = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
-            
-            # Get current time in UTC
-            now_utc = datetime.now(timezone.utc)
-            
-            # Ensure both datetimes have consistent timezone handling
-            if date_value.tzinfo is None:
-                # If date_value is naive, assume it's UTC and make it timezone-aware
+                # Strip whitespace and handle 'Z' suffix specifically
+                s = date_value.strip()
+                if s.upper().endswith('Z'):
+                    s = s[:-1] + '+00:00'
+                # Parse the modified string
+                parsed_date = datetime.fromisoformat(s)
+                # Convert to UTC if naive
+                if parsed_date.tzinfo is None:
+                    parsed_date = parsed_date.replace(tzinfo=timezone.utc)
+                date_value = parsed_date
+
+            # Ensure all datetimes are timezone-aware (convert naive to UTC)
+            if isinstance(date_value, datetime) and date_value.tzinfo is None:
                 date_value = date_value.replace(tzinfo=timezone.utc)
-            
-            # Calculate cutoff date
+
+            # Calculate cutoff and compare
+            now_utc = datetime.now(timezone.utc)
             cutoff_date = now_utc - timedelta(days=days_threshold)
-            
             return date_value >= cutoff_date
-            
-        except (ValueError, TypeError) as e:
+
+        except Exception as e:
             logger.warning(f"Error parsing date value {date_value}: {str(e)}")
             return False
-        
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_threshold)
-        return date_value >= cutoff_date
+
+    # Journey Report Methods
+    async def get_person_journey_data(self, person_id: UUID, date_range: Optional[tuple] = None) -> JourneyReportData:
+        """Get comprehensive journey report data for a person."""
+        return await self._repository.get_journey_report_data(person_id, date_range)
+    
+    async def get_family_journey_data(self, fam_id: UUID, date_range: Optional[tuple] = None) -> List[JourneyReportData]:
+        """Get comprehensive journey report data for all family members."""
+        return await self._repository.get_family_journey_report_data(fam_id, date_range)
+    
+    async def get_visitors_journey_data(self, start_date: datetime, end_date: datetime, limit: int = 100) -> List[JourneyReportData]:
+        """Get journey report data for visitors within a date range."""
+        return await self._repository.get_visitors_journey_data(start_date, end_date, limit)
+    
+    async def get_person_follow_up_tasks(self, person_id: UUID, limit: int = 100) -> List[FollowUpTask]:
+        """Get all follow-up tasks for a person."""
+        return await self._repository.get_person_follow_up_tasks(person_id, limit)
+    
+    async def get_person_prayer_requests(self, person_id: UUID) -> List[PrayerRequest]:
+        """Get prayer requests for a person."""
+        return await self._repository.get_person_prayer_requests(person_id)
+    
+    async def get_person_feedback(self, person_id: UUID) -> List[PersonFeedback]:
+        """Get feedback entries for a person."""
+        return await self._repository.get_person_feedback(person_id)
+    
+    async def get_person_decisions(self, person_id: UUID) -> List[PersonDecision]:
+        """Get decision data for a person."""
+        return await self._repository.get_person_decisions(person_id)
+
+    

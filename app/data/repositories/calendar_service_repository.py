@@ -10,7 +10,7 @@ from uuid import UUID
 import asyncpg
 from contextlib import asynccontextmanager
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.config.settings import get_settings
@@ -78,9 +78,8 @@ class CalendarRepository:
     
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
     async def get_upcoming_events(self, days_ahead: int = 14) -> List[Dict[str, Any]]:
-        #TODO: EventClas meaning ask paul
         """
-        Get upcoming events for the tenant.
+        Get upcoming events within the specified number of days.
         
         Args:
             days_ahead: Number of days to look ahead for events
@@ -88,7 +87,7 @@ class CalendarRepository:
         Returns:
             List of upcoming event dictionaries
         """
-        end_date = datetime.now() + timedelta(days=days_ahead)
+        end_date = datetime.now(timezone.utc) + timedelta(days=days_ahead)
         
         query = """
             SELECT 
@@ -182,7 +181,7 @@ class CalendarRepository:
         Returns:
             List of person's event participation
         """
-        start_date = datetime.now() - timedelta(days=days_back)
+        start_date = datetime.now(timezone.utc) - timedelta(days=days_back)
         
         # First check if the attendee table exists
         table_check_query = """

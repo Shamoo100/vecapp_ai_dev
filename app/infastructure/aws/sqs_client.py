@@ -246,6 +246,39 @@ class SQSClient:
             logger.error(f"❌ Failed to delete message: {str(e)}")
             return False
     
+    async def change_message_visibility(
+        self,
+        receipt_handle: str,
+        visibility_timeout: int,
+        queue_url: Optional[str] = None
+    ) -> bool:
+        """
+        Change the visibility timeout of a message in the queue.
+        
+        Args:
+            receipt_handle: Receipt handle from received message
+            visibility_timeout: New visibility timeout in seconds
+            queue_url: Queue URL (uses default if not provided)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            target_queue_url = self._get_queue_url(queue_url)
+            
+            self.sqs.change_message_visibility(
+                QueueUrl=target_queue_url,
+                ReceiptHandle=receipt_handle,
+                VisibilityTimeout=visibility_timeout
+            )
+            
+            logger.debug(f"♻️ Changed visibility timeout to {visibility_timeout}s for message")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to change message visibility: {str(e)}")
+            return False
+    
     def get_queue_attributes(self, queue_url: Optional[str] = None) -> Dict[str, Any]:
         """
         Get queue attributes for monitoring and debugging.
@@ -296,61 +329,3 @@ class SQSClient:
         except Exception as e:
             logger.error(f"❌ SQS connection test failed: {str(e)}")
             return False
-
-
-# Backward compatibility - keep the new visitor specific methods available
-class NewVisitorSQSClient(SQSClient):
-    """
-    Specialized SQS client for new visitor signup queue.
-    Inherits from the general SQSClient with visitor-specific convenience methods.
-    """
-    
-    def __init__(self):
-        """Initialize with new visitor signup queue as default"""
-        settings = get_settings()
-        super().__init__(default_queue_url=settings.NEW_VISITOR_SIGNUP_QUEUE_URL)
-    
-    async def send_visitor_signup_message(
-        self, 
-        visitor_data: Dict[str, Any],
-        message_group_id: str = "new_visitor_signup"
-    ) -> Dict[str, Any]:
-        """
-        Send a new visitor signup message to the queue.
-        
-        Args:
-            visitor_data: Dictionary containing visitor information
-            message_group_id: Group ID for FIFO queue
-            
-        Returns:
-            Dictionary with message_id and correlation_id
-        """
-        message = {
-            'event_type': 'new_visitor_signup',
-            'visitor_data': visitor_data
-        }
-        
-        return await self.send_message(
-            message_body=message,
-            message_group_id=message_group_id
-        )
-    
-    async def receive_visitor_signup_messages(
-        self, 
-        max_messages: int = 10,
-        wait_time_seconds: int = 20
-    ) -> List[Dict[str, Any]]:
-        """
-        Receive new visitor signup messages from the queue.
-        
-        Args:
-            max_messages: Maximum number of messages to receive
-            wait_time_seconds: Long polling wait time
-            
-        Returns:
-            List of parsed messages with receipt handles
-        """
-        return await self.receive_messages(
-            max_messages=max_messages,
-            wait_time_seconds=wait_time_seconds
-        )

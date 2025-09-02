@@ -47,23 +47,28 @@ class FeedbackResponse(BaseModel):
     summary="Generate AI-Powered Visitor Follow-up Note",
     description="Generate a comprehensive AI-powered follow-up note for a church visitor using enhanced data collection and analysis."
 )
+@router.post("/generate-note")
 async def generate_visitor_note(
     request: GenerateNoteRequest,
     background_tasks: BackgroundTasks,
-    tenant: str = Depends(get_current_tenant)
+    tenant: str = Depends(get_current_schema_name)  # Use get_current_schema_name
 ) -> GenerateNoteResponse:
     """
     Generate an AI-powered visitor follow-up note with comprehensive analysis.
-    
-    This endpoint:
-    - Collects data from multiple sources (visitor profile, welcome form, notes, etc.)
-    - Performs AI analysis for sentiment, interests, and recommendations
-    - Generates structured recommendations across four categories
-    - Saves the note to both member service and AI audit databases
-    - Supports both synchronous and asynchronous processing
     """
     try:
-        followup_service = FollowupService(tenant)
+        # Validate tenant consistency with event data
+        if request.event_data.tenant != tenant:
+            logger.error(
+                f"Tenant mismatch: API tenant '{tenant}' != event tenant '{request.event_data.tenant}'"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tenant mismatch: API context '{tenant}' does not match event tenant '{request.event_data.tenant}'"
+            )
+        
+        # Initialize service with validated tenant
+        followup_service = FollowupService(schema_name=tenant)
         
         if request.async_processing:
             # Process in background for large data sets
@@ -206,19 +211,37 @@ async def legacy_generate_note(
 
 
 async def _process_note_async(
-    followup_service: FollowupService,
+    schema_name: str,  # Pass schema_name explicitly
     event_data: VisitorEventData
 ) -> None:
     """
     Background task for asynchronous note processing.
-    Used for large data sets or when immediate response is not required.
     """
     try:
-        result = await followup_service.generate_enhanced_summary_note(event_data)
-        logger.info(f"Async note generation completed for event {event_data.event_id}")
+        # Validate tenant consistency
+        if event_data.tenant != schema_name:
+            logger.error(
+                f"Background task tenant mismatch: schema '{schema_name}' != event '{event_data.tenant}'"
+            )
+            return
         
-        # Could trigger notifications or webhooks here
+        # Create tenant-specific services
+        followup_service = FollowupService(schema_name=schema_name)
+        context_builder = VisitorContextBuilder(schema_name=schema_name)
+        
+        # Build context and generate note
+        visitor_context = await context_builder.build_context(event_data)
+        result = await followup_service.generate_enhanced_summary_note(event_data, visitor_context)
+        
+        logger.info(f"Async note generation completed for event {event_data.event_id} in tenant {schema_name}")
         
     except Exception as e:
-        logger.error(f"Async note generation failed for event {event_data.event_id}: {str(e)}")
-        # Could trigger error notifications here
+        logger.error(f"Async note generation failed for event {event_data.event_id} in tenant {schema_name}: {str(e)}")
+
+# Update the background task call
+if request.async_processing:
+    background_tasks.add_task(
+        _process_note_async,
+        tenant,  # Pass tenant explicitly
+        request.event_data
+    )

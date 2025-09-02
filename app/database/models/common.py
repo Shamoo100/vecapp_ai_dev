@@ -18,8 +18,9 @@ class PersonMixin:
 class TimestampMixin:
     """Mixin that adds created_at and updated_at columns to models."""
     
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+    # Fix: Use timezone-aware datetime columns
+    created_at = Column(DateTime(timezone=True), default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class SchemaConfigMixin:

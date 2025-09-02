@@ -8,7 +8,7 @@ orchestrating the external auth repository for database access.
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import bcrypt
 
 from app.data.repositories.external_auth_repository import ExternalAuthRepository
@@ -208,7 +208,7 @@ class ExternalAuthService:
                 'recent_users': len([
                     u for u in users 
                     if u.get('created_at') and 
-                    (datetime.utcnow() - u['created_at']).days <= 30
+                    (datetime.now(timezone.utc) - u['created_at']).days <= 30
                 ])
             }
             

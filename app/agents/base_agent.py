@@ -1,13 +1,14 @@
 from abc import ABC, abstractmethod
 import logging
 from typing import Any, Dict, Optional
+from app.infastructure.ai.llm_provider_factory import LLMProviderFactory
 
 logger = logging.getLogger(__name__)
 
 class BaseAgent(ABC):
     def __init__(self, agent_id: str, schema: str):
         """
-        Initialize the agent.
+        Initialize the agent with LLM provider support.
         
         Args:
             agent_id: The unique identifier for the agent
@@ -15,6 +16,7 @@ class BaseAgent(ABC):
         """
         self.agent_id = agent_id
         self.schema = schema
+        self.llm_factory = LLMProviderFactory()
         logger.info(f"Initialized agent {agent_id} with schema {schema}")
 
     @abstractmethod
@@ -30,6 +32,32 @@ class BaseAgent(ABC):
         """
         logger.info(f"Processing data with agent {self.agent_id} for schema {self.schema}")
         return {}
+
+    async def generate_llm_content(self, prompt: str, **kwargs) -> str:
+        """
+        Generate content using available LLM providers with automatic fallback.
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            **kwargs: Additional parameters for the LLM
+            
+        Returns:
+            Generated content string
+        """
+        try:
+            return await self.llm_factory.generate_content_with_fallback(prompt, **kwargs)
+        except Exception as e:
+            logger.error(f"LLM content generation failed for agent {self.agent_id}: {e}")
+            raise
+
+    def get_llm_provider_status(self) -> Dict[str, Any]:
+        """
+        Get the status of all LLM providers.
+        
+        Returns:
+            Dictionary containing provider status information
+        """
+        return self.llm_factory.get_provider_status()
 
     async def validate_tenant_access(self) -> bool:
         """
@@ -49,25 +77,18 @@ class BaseAgent(ABC):
             message: The message to log
             level: The log level
         """
-        log_methods = {
-            "info": logger.info,
-            "error": logger.error,
-            "warning": logger.warning,
-            "debug": logger.debug
-        }
-        
-        schema_context = f"[Schema: {self.schema}] "
-        log_methods.get(level, logger.info)(f"{schema_context}{message}")
+        getattr(logger, level, logger.info)(f"[{self.agent_id}] {message}")
 
     async def get_agent_status(self) -> Dict[str, Any]:
         """
-        Get the status of the agent.
+        Get comprehensive agent status including LLM providers.
         
         Returns:
-            The agent status
+            Dictionary containing agent status
         """
         return {
             "agent_id": self.agent_id,
             "schema": self.schema,
+            "llm_providers": self.get_llm_provider_status(),
             "status": "active"
         }

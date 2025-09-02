@@ -2,6 +2,8 @@ from typing import Dict, Any
 from app.agents.base_agent import BaseAgent
 from app.database.repositories.connection import DatabaseConnection
 from app.api.schemas.ai_models import AIPersonBase
+
+#TODO:Extend to help clean and prepapre data for parson
 class DataCollectionAgent(BaseAgent):
     def __init__(self, agent_id: str, schema: str):
         super().__init__(agent_id, schema)

@@ -148,34 +148,34 @@ class FollowupSummaryAgent(BaseAgent):
         # TODO: Implement actual PDF generation logic
         return b""
 
-    async def generate_followup_note(self, visitor_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Generate a follow-up note for a new visitor using the FollowupNoteAgent for consistency.
+    # async def generate_followup_note(self, visitor_data: Dict[str, Any]) -> Dict[str, Any]:
+    #     """
+    #     Generate a follow-up note for a new visitor using the FollowupNoteAgent for consistency.
 
-        Args:
-            visitor_data: Dictionary containing visitor information and context
+    #     Args:
+    #         visitor_data: Dictionary containing visitor information and context
 
-        Returns:
-            Dictionary containing the follow-up note details with AI-generated content
-        """
-        try:
-            person_name = f"{visitor_data.get('first_name', '')} {visitor_data.get('last_name', '')}".strip()
-            logger.info(f"Delegating follow-up note generation for visitor {person_name} to FollowupNoteAgent")
+    #     Returns:
+    #         Dictionary containing the follow-up note details with AI-generated content
+    #     """
+    #     try:
+    #         person_name = f"{visitor_data.get('first_name', '')} {visitor_data.get('last_name', '')}".strip()
+    #         logger.info(f"Delegating follow-up note generation for visitor {person_name} to FollowupNoteAgent")
 
-            # Delegate to the FollowupNoteAgent for consistent note generation
-            followup_note = await self.note_agent.generate_followup_note(visitor_data)
+    #         # Delegate to the FollowupNoteAgent for consistent note generation
+    #         followup_note = await self.note_agent.generate_followup_note(visitor_data)
             
-            logger.info(f"Follow-up note generated successfully for {person_name} via FollowupNoteAgent")
-            return followup_note
+    #         logger.info(f"Follow-up note generated successfully for {person_name} via FollowupNoteAgent")
+    #         return followup_note
             
-        except Exception as e:
-            logger.error(f"Error generating follow-up note via FollowupNoteAgent: {str(e)}")
-            # Return a basic note structure in case of error
-            return {
-                "note": f"Follow-up needed for {visitor_data.get('first_name', 'visitor')} {visitor_data.get('last_name', '')}. Please review task details and contact appropriately.",
-                "person_id": visitor_data.get("person_id"),
-                "confidence_score": 0.3,
-                "generated_at": datetime.utcnow().isoformat(),
-                "ai_generated": True,
-                "error": str(e)
-            }
+    #     except Exception as e:
+    #         logger.error(f"Error generating follow-up note via FollowupNoteAgent: {str(e)}")
+    #         # Return a basic note structure in case of error
+    #         return {
+    #             "note": f"Follow-up needed for {visitor_data.get('first_name', 'visitor')} {visitor_data.get('last_name', '')}. Please review task details and contact appropriately.",
+    #             "person_id": visitor_data.get("person_id"),
+    #             "confidence_score": 0.3,
+    #             "generated_at": datetime.utcnow().isoformat(),
+    #             "ai_generated": True,
+    #             "error": str(e)
+    #         }

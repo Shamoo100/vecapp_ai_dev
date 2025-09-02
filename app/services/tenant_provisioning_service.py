@@ -323,7 +323,16 @@ class TenantProvisioningService:
                         )
                     )
                 else:
-                    batch_response.results.append(result)
+                    if isinstance(result, Exception):
+                        batch_response.results.append(
+                            TenantProvisioningResult(
+                                tenant_data=batch_data.tenants[i],
+                                success=False,
+                                error=str(result)
+                            )
+                        )
+                    else:
+                        batch_response.results.append(result)
             
             # Update batch status
             successful_count = sum(1 for r in batch_response.results if r.success)

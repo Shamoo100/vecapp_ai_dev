@@ -29,7 +29,7 @@ try:
     from app.database.models.tenant import (
         Base, AIPerson, AIFam, AINotes, AITask, Tenant,
         DecisionAudit, AIFeedback, AIRecommendationLog, 
-        SuppressionLog, Report, Auth, UserType, UserStatus, AIAuditLog
+        AISuppressionLog, Report, Auth, UserType, UserStatus, AIAuditLog
     )
     logger.info(f"Successfully imported tenant models: {list(Base.metadata.tables.keys())}")
 except ImportError as e:

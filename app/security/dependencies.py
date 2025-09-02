@@ -50,6 +50,20 @@ def UserAndTenant(
     """
     return user, tenant
 
+async def get_current_schema_name(
+    tenant: TenantContextResponse = Depends(require_tenant_context)
+) -> str:
+    """
+    Dependency function that extracts schema_name from tenant context.
+    
+    Args:
+        tenant: Tenant context from headers (required)
+    
+    Returns:
+        Schema name string for database operations
+    """
+    return tenant.schema_name
+
 # === EXPORTS ===
 
 __all__ = [
@@ -61,6 +75,7 @@ __all__ = [
     # Required dependencies
     "RequireUser",
     "RequireTenant",
+    "get_current_schema_name",
     
     # Combination dependencies
     "UserAndTenant"

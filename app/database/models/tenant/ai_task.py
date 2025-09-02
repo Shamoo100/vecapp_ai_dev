@@ -1,11 +1,11 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, Time, Text, UUID, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, Time, Text, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from ..base import Base
-from ..common import TimestampMixin, AIProcessingMixin, SchemaConfigMixin # ADD THIS IMPORT
+from ..common import TimestampMixin, AIProcessingMixin, SchemaConfigMixin
 
-class AITask(Base, TimestampMixin, AIProcessingMixin, SchemaConfigMixin):  # ADD MIXINS
-    """AI-driven task model for follow-up and engagement activities."""
+class AITask(Base, TimestampMixin, AIProcessingMixin, SchemaConfigMixin):
+    """AI-driven task model with relaxed constraints for secondary service."""
     __tablename__ = 'ai_task'
     
     # Core identification
@@ -18,11 +18,11 @@ class AITask(Base, TimestampMixin, AIProcessingMixin, SchemaConfigMixin):  # ADD
     task_status = Column(String(100), nullable=True)
     task_priority = Column(String(50), nullable=True)
     
-    # Links to related entities
+    # Links to related entities (FK constraints removed)
     created_by = Column(UUID)
     recipient_id = Column(Integer, nullable=True)
-    recipient_person_id = Column(UUID, ForeignKey('ai_person.id'), nullable=True)
-    recipient_family_id = Column(UUID, ForeignKey('ai_fam.id'), nullable=True)
+    recipient_person_id = Column(UUID, nullable=True, comment="Reference to ai_person.id (no FK constraint)")
+    recipient_family_id = Column(UUID, nullable=True, comment="Reference to ai_fam.id (no FK constraint)")
     task_assignee_id = Column(UUID, nullable=True)
     
     # Status tracking
@@ -36,10 +36,7 @@ class AITask(Base, TimestampMixin, AIProcessingMixin, SchemaConfigMixin):  # ADD
     task_type_flag = Column(String(100), nullable=True)
     follow_up_prev_task = Column(Boolean, nullable=True)   
     
-    # Relationships
-    person = relationship("AIPerson", back_populates="ai_tasks")
-    ai_notes = relationship("AINotes", back_populates="task", cascade="all, delete-orphan")
-    ai_recommendation_logs = relationship("AIRecommendationLog", back_populates="ai_task")
+    # Relationships removed since no FK constraints
     
     def __repr__(self):
         return f"<AITask(id={self.id}, title='{self.task_title}', ai_agent='{self.ai_agent_type}', status='{self.task_status}')>"

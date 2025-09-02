@@ -6,6 +6,7 @@ Direct SQS data-driven context generation for accurate AI note generation.
 from typing import Dict, List, Any, Optional
 import asyncio
 from datetime import datetime
+from uuid import UUID
 import logging
 
 from app.api.schemas.event_schemas import (
@@ -13,6 +14,7 @@ from app.api.schemas.event_schemas import (
     FamilyScenario, 
     VisitorContextData
 )
+from app.data.models.member_service_models import PersonProfile, PersonNote, FamilyMember
 from app.services.member_service import MemberService
 from app.services.calendar_service import CalendarService
 from app.services.connect_service import ConnectService
@@ -107,7 +109,7 @@ class VisitorContextBuilder:
             logger.info(f"Resolved scenario: {scenario_info.scenario_type} for person {event_data.person_id}")
             
             # Collect data based on scenario
-            collected_data = await self._collect_scenario_based_data(scenario_info.scenario_type)
+            collected_data = await self._collect_scenario_based_data(scenario_info)
             
             # Build final context structure
             visitor_context = VisitorContextData(
@@ -138,33 +140,14 @@ class VisitorContextBuilder:
             
         except Exception as e:
             logger.error(f"Error building visitor context: {str(e)}")
-            return self._build_fallback_context(event_data, str(e))
+            scenario_info = locals().get("scenario_info", None)
+            # Fallback context in case of errors
+            return self._build_fallback_context(event_data, str(e), scenario_info)
         finally:
             # Clean up services
             await self._cleanup_services()
-    
-    def _resolve_family_scenario(self, event_data: VisitorEventData) -> str:
-        """
-        Resolve family scenario directly from event data.
-        Uses the family_context and family_history to determine scenario.
-        """
-        # Use family_context to determine scenario
-        family_context = event_data.family_context or "individual"
-        
-        # Determine scenario based on event data
-        if event_data.fam_id and event_data.new_family_members_id:
-            if len(event_data.new_family_members_id) > 1:
-                return "new_family_multiple_members"
-            else:
-                return "new_family_single_member"
-        elif event_data.fam_id and not event_data.new_family_members_id:
-            return "existing_family_new_member"
-        elif not event_data.fam_id:
-            return "individual_visitor"
-        else:
-            return "unknown_scenario"
-    
-    async def _collect_scenario_based_data(self, scenario: str) -> Dict[str, Any]:
+
+    async def _collect_scenario_based_data(self, scenario_info: FamilyScenario) -> Dict[str, Any]:
         """
         Collect data based on the resolved scenario.
         Each scenario has specific data requirements.
@@ -172,63 +155,36 @@ class VisitorContextBuilder:
         if not self.event_data or not self.member_service:
             raise ValueError("Event data and services must be initialized before collecting data")
         
-        # Collect data in parallel
-        tasks = []
-        
-        # Always collect primary visitor data
-        tasks.append(("primary_visitor", self._collect_primary_visitor_data()))
-        
-        # Always collect comprehensive visitor welcome form data (primary data source)
-        tasks.append(("visitor_welcome_form_data", self._collect_visitor_welcome_form_data()))
-        
-        # Scenario-specific data collection
-        if scenario in ["new_family_multiple_members", "new_family_single_member"]:
-            # New family scenarios
-            tasks.extend([
-                ("family_members", self._collect_family_members_data(
-                    self.event_data.new_family_members_id or [self.event_data.person_id]
-                )),
-                ("first_timer_notes", self._collect_first_timer_notes()),
-                ("prayer_requests", self._collect_prayer_requests())
-            ])
-        elif scenario == "existing_family_new_member":
-            # Existing family with new member
-            family_member_ids = [self.event_data.person_id]
-            if self.event_data.fam_head_id:
-                family_member_ids.append(self.event_data.fam_head_id)
-            
-            tasks.extend([
-                ("family_members", self._collect_family_members_data(family_member_ids)),
-                ("existing_followup_notes", self._collect_existing_followup_notes()),
-                ("prayer_requests", self._collect_prayer_requests())
-            ])
-        else:
-            # Individual visitor or unknown scenario
-            tasks.extend([
-                ("first_timer_notes", self._collect_first_timer_notes()),
-                ("prayer_requests", self._collect_prayer_requests())
-            ])
-        
-        # Always collect feedback fields
-        tasks.append(("feedback_fields", self._collect_feedback_fields()))
-        
-        # Always collect public data for recommendations (with tenant context)
-        tasks.extend([
-            ("public_teams", self._collect_public_teams()),
-            ("public_groups", self._collect_public_groups()),
-            ("upcoming_events", self._collect_upcoming_events())
-        ])
-        
-        # Execute all tasks in parallel
+        # --- Define all possible data collection tasks ---
+        tasks_to_run: Dict[str, Any] = {
+            "visitor_welcome_form_data": self._collect_visitor_welcome_form_data(),
+            "first_timer_notes": self._collect_first_timer_notes(),
+            "prayer_requests": self._collect_prayer_requests(),
+            "feedback_fields": self._collect_feedback_fields(),
+            "public_teams": self._collect_public_teams(),
+            "public_groups": self._collect_public_groups(),
+            "upcoming_events": self._collect_upcoming_events(),
+        }
+
+        scenario = scenario_info.scenario_type
+        family_ids = scenario_info.family_members_to_query
+
+        # --- Add scenario-specific tasks ---
+        if scenario in ("individual_existing", "family_new", "family_existing"):
+            tasks_to_run["family_members"] = self._collect_family_members_data(family_ids)
+
+        if scenario in ("individual_existing", "family_existing"):
+            tasks_to_run["existing_followup_notes"] = self._collect_existing_followup_notes()
+
+        # --- Execute tasks concurrently ---
+        task_names = list(tasks_to_run.keys())
+        task_coroutines = list(tasks_to_run.values())
+
         results = {}
-        if tasks:
-            task_results = await asyncio.gather(
-                *[task for _, task in tasks], 
-                return_exceptions=True
-            )
+        if task_coroutines:
+            task_results = await asyncio.gather(*task_coroutines, return_exceptions=True)
             
-            # Process results
-            for i, (data_type, _) in enumerate(tasks):
+            for i, data_type in enumerate(task_names):
                 result = task_results[i]
                 if isinstance(result, Exception):
                     logger.error(f"Error collecting {data_type}: {str(result)}")
@@ -236,7 +192,13 @@ class VisitorContextBuilder:
                 else:
                     results[data_type] = result or ([] if data_type.endswith('s') else {})
         
+        # --- Derive synchronous data from results ---
+        if "family_members" in results:
+            results["family_size"] = len(results["family_members"])
+            
         return results
+    
+
     
     async def _collect_primary_visitor_data(self, person_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -257,7 +219,15 @@ class VisitorContextBuilder:
                 else:
                     raise ValueError("Member service not initialized")
             
-            return await self.member_service.get_member_profile(target_person_id) or {}
+            target_person_uuid = UUID(str(target_person_id))
+            person_profile = await self.member_service.get_person_profile(target_person_uuid)
+            
+            # Add detailed logging
+            profile_data = person_profile.model_dump() if person_profile else {}
+            logger.info(f"Collected primary visitor data for {target_person_id}: {len(profile_data)} fields")
+            logger.debug(f"Primary visitor data keys: {list(profile_data.keys()) if profile_data else 'None'}")
+            
+            return profile_data
         except Exception as e:
             logger.error(f"Error collecting primary visitor data: {str(e)}")
             return {}
@@ -281,11 +251,23 @@ class VisitorContextBuilder:
                 else:
                     raise ValueError("Member service not initialized")
             
-            return await self.member_service.get_visitor_welcome_form_data(target_person_id) or {}
+            welcome_form_data = await self.member_service.get_visitor_welcome_form_data(str(target_person_id)) or {}
+            
+            # Add detailed logging
+            logger.info(f"Collected welcome form data for {target_person_id}: {len(welcome_form_data)} fields")
+            if welcome_form_data:
+                person_info = welcome_form_data.get('person_info', {})
+                visit_info = welcome_form_data.get('visit_info', {})
+                spiritual_info = welcome_form_data.get('spiritual_info', {})
+                logger.info(f"Welcome form breakdown - person_info: {len(person_info)} fields, visit_info: {len(visit_info)} fields, spiritual_info: {len(spiritual_info)} fields")
+            else:
+                logger.warning(f"No welcome form data found for person {target_person_id}")
+            
+            return welcome_form_data
         except Exception as e:
             logger.error(f"Error collecting visitor welcome form data: {str(e)}")
             return {}
-    
+
     async def _collect_family_members_data(self, family_member_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
         Collect family members data for context.
@@ -303,14 +285,19 @@ class VisitorContextBuilder:
             if not self.member_service:
                 raise ValueError("Member service not initialized")
             
-            # Use the member service to get family member profiles
-            family_profiles = []
-            for member_id in family_member_ids:
-                profile = await self.member_service.get_member_profile(member_id)
-                if profile:
-                    family_profiles.append(profile)
+            # Collect all profiles at once if possible
+            profiles = await self.member_service.get_family_members_profiles(family_member_ids)
+        # profiles should be a list of PersonProfile or dicts
+
+            # Convert to dicts if needed
+            result = []
+            for profile in profiles:
+                if hasattr(profile, "model_dump"):
+                    result.append(profile.model_dump())
+                elif isinstance(profile, dict):
+                    result.append(profile)
+            return result
             
-            return family_profiles
         except Exception as e:
             logger.warning(f"Could not collect family members data: {str(e)}")
             return []
@@ -330,11 +317,11 @@ class VisitorContextBuilder:
             prayer_requests = []
             
             # First, try to get existing prayer request notes
-            existing_prayers = await self.member_service.get_prayer_requests(target_person_id) or []
+            existing_prayers = await self.member_service.get_prayer_requests(str(target_person_id)) or []
             prayer_requests.extend(existing_prayers)
             
             # Extract prayer requests from welcome form data
-            welcome_form_data = await self.member_service.get_visitor_welcome_form_data(target_person_id)
+            welcome_form_data = await self.member_service.get_visitor_welcome_form_data(str(target_person_id))
             
             if welcome_form_data and welcome_form_data.get('spiritual_info'):
                 spiritual_info = welcome_form_data['spiritual_info']
@@ -374,11 +361,11 @@ class VisitorContextBuilder:
             feedback_data = []
             
             # First, try to get existing feedback notes
-            existing_feedback = await self.member_service.get_feedback_fields(target_person_id) or []
+            existing_feedback = await self.member_service.get_feedback_fields(str(target_person_id)) or []
             feedback_data.extend(existing_feedback)
             
             # Extract feedback from welcome form data
-            welcome_form_data = await self.member_service.get_visitor_welcome_form_data(target_person_id)
+            welcome_form_data = await self.member_service.get_visitor_welcome_form_data(str(target_person_id))
             
             if welcome_form_data and welcome_form_data.get('spiritual_info'):
                 spiritual_info = welcome_form_data['spiritual_info']
@@ -447,11 +434,11 @@ class VisitorContextBuilder:
             first_timer_notes = []
             
             # First, try to get existing first-timer notes
-            existing_notes = await self.member_service.get_first_timer_notes(target_person_id) or []
+            existing_notes = await self.member_service.get_first_timer_notes(str(target_person_id)) or []
             first_timer_notes.extend(existing_notes)
             
             # Create comprehensive first-timer note from welcome form data
-            welcome_form_data = await self.member_service.get_visitor_welcome_form_data(target_person_id)
+            welcome_form_data = await self.member_service.get_visitor_welcome_form_data(str(target_person_id))
             
             if welcome_form_data:
                 first_timer_insights = []
@@ -539,15 +526,15 @@ class VisitorContextBuilder:
             # Since get_followup_task_notes doesn't exist, we'll get person notes
             # and filter for followup-related notes
             from uuid import UUID
-            person_uuid = UUID(target_person_id)
+            person_uuid = UUID(str(target_person_id))
             notes = await self.member_service._repository.get_person_notes(person_uuid, limit=20)
             
             # Filter for followup-related notes
             followup_notes = []
             if notes:
                 for note in notes:
-                    note_type = note.get('type', '').lower()
-                    note_title = note.get('title', '').lower()
+                    note_type = note.type.lower()
+                    note_title = note.title.lower()
                     if 'followup' in note_type or 'follow-up' in note_type or 'followup' in note_title or 'follow-up' in note_title:
                         followup_notes.append(note)
             
@@ -560,19 +547,19 @@ class VisitorContextBuilder:
         """Collect public teams data for recommendations."""
         try:
             if not self.connect_service or not self.tenant_identifier:
-                print("DEBUG: ConnectService not initialized or missing tenant_identifier - no teams available")
+                logger.debug("ConnectService not initialized or missing tenant_identifier - no teams available")
                 return []
             
             teams = await self.connect_service.get_all_teams(self.tenant_identifier)
-            print(f"DEBUG: Collected {len(teams)} teams from connect service")
+            logger.debug(f"Collected {len(teams)} teams from connect service")
             
             # Debug first team structure if available
             if teams:
-                print(f"DEBUG: Sample team structure: {teams[0]}")
+                logger.debug(f"Sample team structure: {teams[0]}")
             
             return teams
         except Exception as e:
-            print(f"DEBUG: Error collecting teams: {str(e)}")
+            logger.error(f"Error collecting teams: {str(e)}")
             return []
 
     async def _collect_public_groups(self) -> List[Dict[str, Any]]:
@@ -613,19 +600,20 @@ class VisitorContextBuilder:
             print(f"DEBUG: Error collecting events: {str(e)}")
             return []
     
-    def _build_fallback_context(self, event_data: VisitorEventData, error_msg: str) -> VisitorContextData:
+    def _build_fallback_context(self, event_data: VisitorEventData, error_msg: str, scenario_info=None) -> VisitorContextData:
         """
         Build a minimal fallback context when data collection fails.
         """
-        # Create a fallback scenario
-        fallback_scenario = FamilyScenario(
-            scenario_type="fallback",
-            primary_person_id=str(event_data.person_id),
-            family_members_to_query=[],
-            fam_id=str(event_data.fam_id) if event_data.fam_id else "unknown",
-            context_strategy="fallback_strategy"
-        )
-        
+        # Use the provided scenario_info if available, else fallback
+        if scenario_info is None:
+            scenario_info = FamilyScenario(
+                scenario_type="fallback",
+                primary_person_id=str(event_data.person_id),
+                family_members_to_query=[],
+                fam_id=str(event_data.fam_id) if event_data.fam_id else "unknown",
+                family_head_id=str(event_data.person_id),
+                context_strategy="fallback_strategy"
+            )
         return VisitorContextData(
             visitor_profile={"person_id": str(event_data.person_id), "error": error_msg, "tenant": event_data.tenant},
             visitor_welcome_form={},
@@ -637,5 +625,5 @@ class VisitorContextBuilder:
             public_teams=[],
             public_groups=[],
             upcoming_events=[],
-            scenario_info=fallback_scenario
+            scenario_info=scenario_info
         )
