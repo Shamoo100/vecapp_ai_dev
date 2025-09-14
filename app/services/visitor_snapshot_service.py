@@ -2,6 +2,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 import logging
+import time
 
 from app.api.schemas.visitor_snapshot import (
     VisitorSnapshotRequest, 
@@ -12,7 +13,7 @@ from app.api.schemas.visitor_snapshot import (
 )
 from app.services.member_service import MemberService
 from app.agents.followup_note_agent import FollowupNoteAgent
-from app.data.models.member_service_models import PersonProfile
+from app.data.models.member_service_models import PersonProfile,FamilyProfile
 from app.api.schemas.event_schemas import VisitorContextData, FamilyScenario
 from app.services.visitor_context_builder import VisitorContextBuilder
 
@@ -184,7 +185,7 @@ class VisitorSnapshotService:
             List of visitor summary entries
         """
         # Process families concurrently with limited concurrency
-        semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent AI calls
+        semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent AI calls
         
         async def process_family_with_semaphore(family_members):
             async with semaphore:
@@ -214,6 +215,57 @@ class VisitorSnapshotService:
                 result_entries.append(entry)
         
         return result_entries
+
+    async def _create_individual_summary_entries_concurrent(
+        self, 
+        visitors: List[PersonProfile],
+        tenant_id: str,
+        note_criteria: NoteCriteria,
+        report_purpose: Optional[str]
+    ) -> List[VisitorSummaryEntry]:
+        """Create individual summary entries with concurrent AI processing
+        
+        Args:
+            visitors: List of individual visitor profiles
+            tenant_id: Tenant identifier
+            note_criteria: Note filtering criteria
+            report_purpose: Purpose of the report
+            
+        Returns:
+            List of visitor summary entries
+        """
+        # Process individuals concurrently with limited concurrency
+        semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent AI calls
+        #use a new method later _create_individual_summary_entry
+        
+        async def process_individual_with_semaphore(visitor):
+            async with semaphore:
+                return await self.followup_agent.generate_individual_note_summaries(
+                    visitor, tenant_id, note_criteria, report_purpose
+                )
+        
+        # Create tasks for concurrent processing
+        tasks = [
+            process_individual_with_semaphore(visitor) 
+            for visitor in visitors
+        ]
+        
+        # Execute all tasks concurrently
+        entries = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Handle any exceptions and create fallback entries
+        result_entries = []
+        for i, entry in enumerate(entries):
+            if isinstance(entry, Exception):
+                logger.error(f"Error processing individual visitor {i}: {entry}")
+                # Create fallback entry for the individual
+                result_entries.append(self._create_fallback_individual_entry(
+                    visitors[i], report_purpose
+                ))
+            else:
+                result_entries.append(entry)
+        
+        return result_entries
     
     async def _create_family_summary_entry(
         self, 
@@ -236,14 +288,37 @@ class VisitorSnapshotService:
         try:
             # Determine primary contact (first visitor or family head)
             primary_visitor = family_members[0]
+            # Check if any member is the family head by comparing with family_head_id
+            # Since PersonProfile doesn't have is_family_head, we need to determine this differently
+            family_head = None
+            if family_members and family_members[0].fam_id:
+                # Get family profile to check family_head_id
+                family_profile = await self.member_service.get_family_by_id(family_members[0].fam_id)
+                if family_profile and family_profile.family_head_id:
+                    # Find the family head among the members
+                    family_head = next(
+                        (member for member in family_members if member.id == family_profile.family_head_id),
+                        family_members[0]  # Fallback to first member
+                    )
+            
+            if not family_head:
+                family_head = family_members[0]  # Fallback to first member
             for member in family_members:
-                if hasattr(member, 'is_family_head') and member.is_family_head:
-                    primary_visitor = member
-                    break
+                if member.fam_id:
+                    # Get family profile to check family_head_id
+                    family_profile = await self.member_service.get_family_by_id(member.fam_id)
+                    if family_profile and family_profile.family_head_id == member.id:
+                        primary_visitor = member
+                        break
             
             # Generate AI summary for the entire family
             ai_summary = await self.generate_family_ai_summary(
                 family_members, primary_visitor, tenant_id, note_criteria, report_purpose
+            )
+            
+            # Fetch and generate note summaries for all family members
+            note_summaries = await self._generate_family_note_summaries(
+                family_members, note_criteria
             )
             
             # Build family member names
@@ -279,6 +354,7 @@ class VisitorSnapshotService:
                 sentiment_classification=sentiment,
                 notes_scope_used=notes_scope,
                 report_purpose=report_purpose or "Family visitor follow-up and engagement tracking",
+                note_summaries=note_summaries,
                 is_expanded=False
             )
             
@@ -286,281 +362,464 @@ class VisitorSnapshotService:
             logger.error(f"Error creating family summary entry: {e}")
             return self._create_fallback_family_entry(family_members, report_purpose)
     
-    async def generate_family_ai_summary(
+    async def _generate_family_note_summaries(
         self, 
+        family_members: List[PersonProfile], 
+        note_criteria: NoteCriteria
+    ) -> List[Dict[str, Any]]:
+        """Generate note summaries for all family members with enhanced debugging"""
+        start_time = time.time()
+        all_note_summaries = []
+        
+        logger.info(f"[DEBUG] Starting note summary generation for {len(family_members)} family members")
+        
+        for i, member in enumerate(family_members):
+            try:
+                logger.debug(f"[DEBUG] Processing notes for family member {i+1}/{len(family_members)}: {member.id}")
+                
+                # Fetch notes for this family member
+                notes_start = time.time()
+                if note_criteria == NoteCriteria.FIRST_VISIT_ONLY:
+                    notes = await self.member_service.get_first_timer_notes(str(member.id))
+                    logger.debug(f"[DEBUG] Fetched {len(notes) if notes else 0} first timer notes for member {member.id}")
+                else:
+                    notes = await self.member_service.get_person_notes(member.id, limit=50)
+                    logger.debug(f"[DEBUG] Fetched {len(notes) if notes else 0} person notes for member {member.id}")
+                
+                notes_time = time.time() - notes_start
+                logger.debug(f"[DEBUG] Note fetching took {notes_time:.2f}s")
+                
+                if notes:
+                    # Log note details for debugging
+                    for j, note in enumerate(notes[:3]):  # Log first 3 notes
+                        if hasattr(note, 'model_dump'):
+                            note_data = note.model_dump()
+                        else:
+                            note_data = note if isinstance(note, dict) else {}
+                        logger.debug(f"[DEBUG] Note {j+1}: ID={note_data.get('id')}, Title='{note_data.get('title', '')[:50]}', Body length={len(note_data.get('notes_body', ''))}, Created={note_data.get('created_at')}")
+                    
+                    # Generate summaries for this member's notes
+                    summary_start = time.time()
+                    member_note_summaries = await self.followup_agent.generate_individual_note_summaries(notes)
+                    summary_time = time.time() - summary_start
+                    
+                    logger.info(f"[DEBUG] Generated {len(member_note_summaries)} note summaries for member {member.id} in {summary_time:.2f}s")
+                    
+                    # Log summary details
+                    for summary in member_note_summaries[:2]:  # Log first 2 summaries
+                        logger.debug(f"[DEBUG] Summary: Type={summary.get('note_type')}, Date={summary.get('date_created')}, Summary='{summary.get('summary', '')[:100]}'")
+                    
+                    all_note_summaries.extend(member_note_summaries)
+                else:
+                    logger.debug(f"[DEBUG] No notes found for member {member.id}")
+                    
+            except Exception as e:
+                logger.error(f"[DEBUG] Error fetching notes for family member {member.id}: {e}")
+                continue
+        
+        # Sort by date (newest first)
+        all_note_summaries.sort(key=lambda x: x.get('date_created', datetime.min), reverse=True)
+        
+        total_time = time.time() - start_time
+        logger.info(f"[PERFORMANCE] Family note summaries completed in {total_time:.2f}s - Generated {len(all_note_summaries)} summaries")
+        
+        return all_note_summaries
+
+    async def _generate_individual_note_summaries(self, visitor: PersonProfile, note_criteria: NoteCriteria) -> List[Dict[str, Any]]:
+        """Generate note summaries for an individual visitor with enhanced debugging"""
+        start_time = time.time()
+        
+        try:
+            logger.debug(f"[DEBUG] Starting individual note summary generation for visitor {visitor.id}")
+            
+            # Fetch notes for this visitor
+            notes_start = time.time()
+            if note_criteria == NoteCriteria.FIRST_VISIT_ONLY:
+                notes = await self.member_service.get_first_timer_notes(str(visitor.id))
+                logger.debug(f"[DEBUG] Fetched {len(notes) if notes else 0} first timer notes for visitor {visitor.id}")
+            else:
+                notes = await self.member_service.get_person_notes(visitor.id, limit=50)
+                logger.debug(f"[DEBUG] Fetched {len(notes) if notes else 0} person notes for visitor {visitor.id}")
+            
+            notes_time = time.time() - notes_start
+            logger.debug(f"[DEBUG] Note fetching took {notes_time:.2f}s")
+            
+            if not notes:
+                logger.warning(f"[DEBUG] No notes found for visitor {visitor.id} with criteria {note_criteria}")
+                return []
+            
+            # Log note details for debugging
+            for i, note in enumerate(notes[:3]):  # Log first 3 notes
+                if hasattr(note, 'model_dump'):
+                    note_data = note.model_dump()
+                elif isinstance(note, dict):
+                    note_data = note
+                else:
+                    note_data = {"content": str(note)}
+                
+                logger.debug(f"[DEBUG] Note {i+1}: title='{note_data.get('title', 'N/A')}', body_length={len(str(note_data.get('notes_body', '')))}, created_at={note_data.get('created_at', 'N/A')}")
+            
+            # Generate summaries using the followup agent
+            ai_start = time.time()
+            logger.debug(f"[DEBUG] Calling followup_agent.generate_individual_note_summaries with {len(notes)} notes")
+            
+            note_summaries = await self.followup_agent.generate_individual_note_summaries(
+                notes, 
+                visitor_id=str(visitor.id)
+            )
+            
+            ai_time = time.time() - ai_start
+            logger.info(f"[DEBUG] AI note summary generation took {ai_time:.2f}s, produced {len(note_summaries)} summaries")
+            
+            # Log summary results
+            if note_summaries:
+                for i, summary in enumerate(note_summaries[:2]):  # Log first 2 summaries
+                    logger.debug(f"[DEBUG] Summary {i+1}: {summary.get('summary', 'N/A')[:100]}... date_created={summary.get('date_created')}")
+            else:
+                logger.warning(f"[DEBUG] No summaries generated despite having {len(notes)} notes")
+            
+            total_time = time.time() - start_time
+            logger.info(f"[PERFORMANCE] Individual note summaries completed in {total_time:.2f}s (notes: {notes_time:.2f}s, AI: {ai_time:.2f}s)")
+            
+            return note_summaries
+            
+        except Exception as e:
+            total_time = time.time() - start_time
+            logger.error(f"[PERFORMANCE] Individual note summaries failed after {total_time:.2f}s: {e}")
+            logger.error(f"Error generating note summaries for visitor {visitor.id}: {e}")
+            return []
+
+    async def generate_family_ai_summary(
+        self,
         family_members: List[PersonProfile],
         primary_visitor: PersonProfile,
         tenant_id: str,
         note_criteria: NoteCriteria,
         report_purpose: Optional[str]
     ) -> str:
-        """Generate AI-powered summary for a family group
+        """Generate AI summary for a family group with performance logging"""
+        criteria_type = "family_" + ("first_visit" if note_criteria == NoteCriteria.FIRST_VISIT_ONLY else "all_notes")
+        start_time = time.time()
         
-        Args:
-            family_members: List of family member profiles
-            primary_visitor: The primary contact person
-            tenant_id: Tenant identifier
-            note_criteria: Note filtering criteria
-            report_purpose: Purpose of the report
-            
-        Returns:
-            AI-generated summary string
-        """
         try:
+            logger.info(f"[PERFORMANCE] Starting {criteria_type} processing for family {primary_visitor.id}")
+            
             # Build family context for AI processing
+            context_start = time.time()
             family_context = await self._build_family_context(
                 family_members, primary_visitor, tenant_id, note_criteria
             )
+            context_time = time.time() - context_start
+            logger.info(f"[PERFORMANCE] Family context built in {context_time:.2f}s")
             
-            # Use the followup note agent to generate a family summary
+            # Debug log the context data
+            logger.debug(f"[DEBUG] Family context - visitor_profile keys: {list(family_context.visitor_profile.keys()) if family_context.visitor_profile else 'None'}")
+            logger.debug(f"[DEBUG] Family context - welcome_form keys: {list(family_context.visitor_welcome_form.keys()) if family_context.visitor_welcome_form else 'None'}")
+            logger.debug(f"[DEBUG] Family context - notes count: {len(family_context.first_timer_notes) if family_context.first_timer_notes else 0} first timer, {len(family_context.existing_followup_notes) if family_context.existing_followup_notes else 0} existing")
+            
+            # Use the followup note agent to generate family summary
+            ai_start = time.time()
             ai_note_data = await self.followup_agent.generate_visitor_snapshot_summary(family_context)
+            ai_time = time.time() - ai_start
+            logger.info(f"[PERFORMANCE] AI summary generated in {ai_time:.2f}s")
             
             # Extract the natural summary from the AI note
-            return ai_note_data.get("natural_summary", "No summary available")
+            summary = ai_note_data.get("natural_summary", "No summary available")
+            
+            total_time = time.time() - start_time
+            logger.info(f"[PERFORMANCE] {criteria_type} completed in {total_time:.2f}s (context: {context_time:.2f}s, AI: {ai_time:.2f}s)")
+            
+            return summary
             
         except Exception as e:
+            total_time = time.time() - start_time
+            logger.error(f"[PERFORMANCE] {criteria_type} failed after {total_time:.2f}s: {e}")
             logger.error(f"Error generating family AI summary: {e}")
             return self._create_fallback_family_summary(family_members, primary_visitor)
+
+    async def generate_individual_ai_summary(
+        self,
+        visitor: PersonProfile,
+        tenant_id: str,
+        note_criteria: NoteCriteria,
+        report_purpose: Optional[str]
+    ) -> str:
+        """Generate AI summary for individual visitor with performance logging"""
+        criteria_type = "individual_" + ("first_visit" if note_criteria == NoteCriteria.FIRST_VISIT_ONLY else "all_notes")
+        start_time = time.time()
+        
+        try:
+            logger.info(f"[PERFORMANCE] Starting {criteria_type} processing for visitor {visitor.id}")
+            
+            # Build individual visitor context for AI processing
+            context_start = time.time()
+            visitor_context = await self._build_individual_visitor_context(
+                visitor, tenant_id, note_criteria
+            )
+            context_time = time.time() - context_start
+            logger.info(f"[PERFORMANCE] Individual context built in {context_time:.2f}s")
+            
+            # Debug log the context data
+            logger.debug(f"[DEBUG] Individual context - visitor_profile keys: {list(visitor_context.visitor_profile.keys()) if visitor_context.visitor_profile else 'None'}")
+            logger.debug(f"[DEBUG] Individual context - welcome_form keys: {list(visitor_context.visitor_welcome_form.keys()) if visitor_context.visitor_welcome_form else 'None'}")
+            logger.debug(f"[DEBUG] Individual context - notes count: {len(visitor_context.first_timer_notes) if visitor_context.first_timer_notes else 0} first timer, {len(visitor_context.existing_followup_notes) if visitor_context.existing_followup_notes else 0} existing")
+            
+            # Use the followup note agent to generate a summary
+            ai_start = time.time()
+            ai_note_data = await self.followup_agent.generate_visitor_snapshot_summary(visitor_context)
+            ai_time = time.time() - ai_start
+            logger.info(f"[PERFORMANCE] AI summary generated in {ai_time:.2f}s")
+            
+            # Extract the natural summary from the AI note
+            summary = ai_note_data.get("natural_summary", "No summary available")
+            
+            total_time = time.time() - start_time
+            logger.info(f"[PERFORMANCE] {criteria_type} completed in {total_time:.2f}s (context: {context_time:.2f}s, AI: {ai_time:.2f}s)")
+            
+            return summary
+            
+        except Exception as e:
+            total_time = time.time() - start_time
+            logger.error(f"[PERFORMANCE] {criteria_type} failed after {total_time:.2f}s: {e}")
+            logger.error(f"Error generating individual AI summary: {e}")
+            return self._create_fallback_summary(visitor)
+
+    async def _build_individual_visitor_context(
+        self, 
+        visitor: PersonProfile, 
+        tenant_id: str, 
+        note_criteria: NoteCriteria
+    ) -> VisitorContextData:
+        """Build context for individual visitor AI processing with proper schema"""
+        try:
+            # Fetch notes based on criteria
+            if note_criteria == NoteCriteria.FIRST_VISIT_ONLY:
+                notes = await self.member_service.get_first_timer_notes(str(visitor.id))
+            else:
+                notes = await self.member_service.get_person_notes(visitor.id)
+            
+            # Build visitor profile data
+            visitor_profile = {
+                "id": str(visitor.id),
+                "first_name": visitor.first_name,
+                "last_name": visitor.last_name,
+                "email": getattr(visitor, 'email', None),
+                "phone": getattr(visitor, 'phone', None),
+                "created_at": visitor.created_at.isoformat() if visitor.created_at else None,
+                "fam_id": str(visitor.fam_id) if visitor.fam_id else None
+            }
+            
+            # Build visitor welcome form data from profile
+            visitor_welcome_form = {
+                "person_info": {
+                    "id": str(visitor.id),
+                    "first_name": visitor.first_name,
+                    "last_name": visitor.last_name,
+                    "email": getattr(visitor, 'email', ''),
+                    "phone": getattr(visitor, 'phone', ''),
+                    "title": getattr(visitor, 'title', ''),
+                    "middle_name": getattr(visitor, 'middle_name', ''),
+                    "address": getattr(visitor, 'address', {}),
+                    "gender": getattr(visitor, 'gender', ''),
+                    "race": getattr(visitor, 'race', ''),
+                    "occupation": getattr(visitor, 'occupation', '')
+                },
+                "visit_info": {
+                    "visit_date": visitor.created_at.isoformat() if visitor.created_at else None,
+                    "how_heard_about_church": getattr(visitor, 'how_heard_about_church', ''),
+                    "recently_relocated": getattr(visitor, 'recently_relocated', ''),
+                    "best_contact_time": getattr(visitor, 'best_contact_time', ''),
+                    "preferred_communication_method": getattr(visitor, 'preferred_communication_method', ''),
+                    "joined_via": getattr(visitor, 'joined_via', ''),
+                    "considering_joining": getattr(visitor, 'considering_joining', ''),
+                    "joining_our_church": getattr(visitor, 'joining_our_church', '')
+                },
+                "spiritual_info": {
+                    "spiritual_need": getattr(visitor, 'spiritual_need', ''),
+                    "spiritual_challenge": getattr(visitor, 'spiritual_challenge', ''),
+                    "prayer_request": getattr(visitor, 'prayer_request', ''),
+                    "feedback": getattr(visitor, 'feedback', ''),
+                    "interested_in_daily_devotional": getattr(visitor, 'interested_in_devotional', '')
+                },
+                "interests": getattr(visitor, 'interests', {})
+            }
+            
+            # Create scenario info
+            from app.api.schemas.event_schemas import FamilyScenario, DataCollectionRequirements
+            scenario_info = FamilyScenario(
+                scenario_type="individual_visitor_snapshot",
+                primary_person_id=str(visitor.id),
+                family_members_to_query=[],
+                family_head_id=str(visitor.id),
+                fam_id=str(visitor.fam_id) if visitor.fam_id else str(visitor.id),
+                context_strategy="individual_visitor",
+                data_requirements=DataCollectionRequirements()
+            )
+            
+            # Convert notes to proper format
+            formatted_notes = []
+            if notes:
+                for note in notes:
+                    if hasattr(note, '__dict__'):
+                        formatted_notes.append(note.__dict__)
+                    elif isinstance(note, dict):
+                        formatted_notes.append(note)
+                    else:
+                        formatted_notes.append({"content": str(note)})
+            
+            return VisitorContextData(
+                visitor_profile=visitor_profile,
+                scenario_info=scenario_info,
+                visitor_welcome_form=visitor_welcome_form,  # Now properly populated
+                family_members=[],
+                first_timer_notes=formatted_notes if note_criteria == NoteCriteria.FIRST_VISIT_ONLY else [],
+                existing_followup_notes=formatted_notes if note_criteria == NoteCriteria.ALL_NOTES else [],
+                prayer_requests=[],
+                feedback_fields=[],
+                public_teams=[],
+                public_groups=[],
+                upcoming_events=[],
+                tenant_business_rules={}
+            )
+            
+        except Exception as e:
+            logger.error(f"Error building individual visitor context for {visitor.id}: {str(e)}")
+            raise
     
     async def _build_family_context(
         self, 
         family_members: List[PersonProfile], 
-        primary_visitor: PersonProfile,
-        tenant_id: str,
+        primary_visitor: PersonProfile, 
+        tenant_id: str, 
         note_criteria: NoteCriteria
     ) -> VisitorContextData:
-        """Build family context data for AI processing
-        
-        Args:
-            family_members: List of family member profiles
-            primary_visitor: The primary contact person
-            tenant_id: Tenant identifier
-            note_criteria: Note filtering criteria
-            
-        Returns:
-            VisitorContextData for AI processing
-        """
+        """Build context for family visitor AI processing with proper welcome form data"""
         try:
-            # Get welcome form data for primary visitor
-            welcome_form_data = await self.member_service.get_visitor_welcome_form_data(str(primary_visitor.id))
+            # Determine family head by checking family profile
+            family_head_id = primary_visitor.id
+            if primary_visitor.fam_id:
+                family_profile = await self.member_service.get_family_by_id(primary_visitor.fam_id)
+                if family_profile and family_profile.family_head_id:
+                    family_head_id = family_profile.family_head_id
             
-            # Create proper FamilyScenario object
-            scenario_info = FamilyScenario(
-                scenario_type="family_visitor_snapshot",
-                primary_person_id=str(primary_visitor.id),
-                fam_id=str(primary_visitor.fam_id) if primary_visitor.fam_id else str(primary_visitor.id),
-                context_strategy="family_visitor_snapshot_context",
-                family_members_to_query=[str(member.id) for member in family_members],
-                family_head_id=str(primary_visitor.id)
-            )
+            # Collect notes for all family members
+            all_notes = []
+            for member in family_members:
+                try:
+                    if note_criteria == NoteCriteria.FIRST_VISIT_ONLY:
+                        member_notes = await self.member_service.get_first_timer_notes(str(member.id))
+                    else:  # ALL_NOTES
+                        member_notes = await self.member_service.get_person_notes(member.id)
+                    
+                    if member_notes:
+                        all_notes.extend(member_notes)
+                except Exception as e:
+                    logger.warning(f"Error fetching notes for family member {member.id}: {str(e)}")
+                    continue
             
-            # Build family context
-            family_context_data = {
-                "visitor_profile": {
-                    "person_id": str(primary_visitor.id),
+            # Build visitor profile data
+            visitor_profile = {
+                "id": str(primary_visitor.id),
+                "first_name": primary_visitor.first_name,
+                "last_name": primary_visitor.last_name,
+                "email": getattr(primary_visitor, 'email', None),
+                "phone": getattr(primary_visitor, 'phone', None),
+                "created_at": primary_visitor.created_at.isoformat() if primary_visitor.created_at else None,
+                "fam_id": str(primary_visitor.fam_id) if primary_visitor.fam_id else None
+            }
+            
+            # Build visitor welcome form data from primary visitor profile
+            visitor_welcome_form = {
+                "person_info": {
+                    "id": str(primary_visitor.id),
                     "first_name": primary_visitor.first_name,
                     "last_name": primary_visitor.last_name,
-                    "email": primary_visitor.email,
-                    "phone": primary_visitor.phone,
-                    "created_at": primary_visitor.created_at.isoformat() if primary_visitor.created_at else None
+                    "email": getattr(primary_visitor, 'email', ''),
+                    "phone": getattr(primary_visitor, 'phone', ''),
+                    "title": getattr(primary_visitor, 'title', ''),
+                    "middle_name": getattr(primary_visitor, 'middle_name', ''),
+                    "address": getattr(primary_visitor, 'address', {}),
+                    "gender": getattr(primary_visitor, 'gender', ''),
+                    "race": getattr(primary_visitor, 'race', ''),
+                    "occupation": getattr(primary_visitor, 'occupation', '')
                 },
-                "visitor_welcome_form": welcome_form_data or {},
-                "family_members": [
-                    {
-                        "person_id": str(member.id),
-                        "first_name": member.first_name,
-                        "last_name": member.last_name,
-                        "relationship": getattr(member, 'relationship', 'Family Member'),
-                        "created_at": member.created_at.isoformat() if member.created_at else None
-                    }
-                    for member in family_members
-                ],
-                "scenario_info": scenario_info,
-                "public_teams": [],
-                "public_groups": [],
-                "upcoming_events": []
+                "visit_info": {
+                    "visit_date": primary_visitor.created_at.isoformat() if primary_visitor.created_at else None,
+                    "how_heard_about_church": getattr(primary_visitor, 'how_heard_about_church', ''),
+                    "recently_relocated": getattr(primary_visitor, 'recently_relocated', ''),
+                    "best_contact_time": getattr(primary_visitor, 'best_contact_time', ''),
+                    "preferred_communication_method": getattr(primary_visitor, 'preferred_communication_method', ''),
+                    "joined_via": getattr(primary_visitor, 'joined_via', ''),
+                    "considering_joining": getattr(primary_visitor, 'considering_joining', ''),
+                    "joining_our_church": getattr(primary_visitor, 'joining_our_church', '')
+                },
+                "spiritual_info": {
+                    "spiritual_need": getattr(primary_visitor, 'spiritual_need', ''),
+                    "spiritual_challenge": getattr(primary_visitor, 'spiritual_challenge', ''),
+                    "prayer_request": getattr(primary_visitor, 'prayer_request', ''),
+                    "feedback": getattr(primary_visitor, 'feedback', ''),
+                    "interested_in_daily_devotional": getattr(primary_visitor, 'interested_in_devotional', '')
+                },
+                "interests": getattr(primary_visitor, 'interests', {})
             }
             
-            return VisitorContextData(**family_context_data)
-            
-        except Exception as e:
-            logger.error(f"Error building family context: {e}")
-            # Return minimal context with proper FamilyScenario
-            fallback_scenario = FamilyScenario(
-                scenario_type="family_visitor_snapshot",
-                primary_person_id=str(primary_visitor.id),
-                fam_id=str(primary_visitor.id),
-                context_strategy="family_visitor_snapshot_context",
-                family_members_to_query=[],
-                family_head_id=str(primary_visitor.id)
-            )
-            
-            return VisitorContextData(
-                visitor_profile={
-                    "person_id": str(primary_visitor.id),
-                    "first_name": primary_visitor.first_name or "Unknown",
-                    "last_name": primary_visitor.last_name or "Visitor"
-                },
-                visitor_welcome_form={},
-                family_members=[],
-                scenario_info=fallback_scenario
-            )
-    
-    # =============================================================================
-    # INDIVIDUAL PROCESSING METHODS
-    # =============================================================================
-    
-    async def _create_individual_summary_entries_concurrent(
-        self,
-        visitors: List[PersonProfile],
-        tenant_id: str,
-        note_criteria: NoteCriteria,
-        report_purpose: Optional[str]
-    ) -> List[VisitorSummaryEntry]:
-        """Create individual summary entries with note criteria support"""
-        semaphore = asyncio.Semaphore(5)  # Limit concurrent AI calls
-        
-        async def process_individual_visitor(visitor):
-            async with semaphore:
-                try:
-                    return await self._create_individual_visitor_summary_entry(
-                        visitor, 
-                        tenant_id,
-                        note_criteria,
-                        report_purpose
-                    )
-                except Exception as e:
-                    logger.error(f"Error processing individual visitor {visitor.id}: {str(e)}")
-                    return self._create_fallback_individual_entry(visitor, report_purpose)
-        
-        tasks = [process_individual_visitor(visitor) for visitor in visitors]
-        return await asyncio.gather(*tasks)
-    
-    async def _create_individual_visitor_summary_entry(
-        self,
-        visitor: PersonProfile,
-        tenant_id: str,
-        note_criteria: NoteCriteria,
-        report_purpose: Optional[str]
-    ) -> VisitorSummaryEntry:
-        """Create summary entry for individual visitor with note criteria"""
-        try:
-            # Build context based on note criteria
-            visitor_context = await self._build_individual_visitor_context(
-                visitor, 
-                tenant_id,
-                note_criteria
-            )
-            
-            # Generate AI summary
-            ai_summary = await self.generate_individual_ai_summary(
-                visitor_context, 
-                report_purpose or "Individual visitor follow-up and engagement tracking"
-            )
-            
-            # Determine notes scope description
-            notes_scope = (
-                "First visit notes and welcome form data only" 
-                if note_criteria == NoteCriteria.FIRST_VISIT_ONLY 
-                else "All notes recorded to date"
-            )
-            
-            return VisitorSummaryEntry(
-                visitor_id=visitor.id,
-                name=f"{visitor.first_name} {visitor.last_name}",
-                first_visit_date=visitor.created_at,
-                family_size=1,
-                family_members=[f"{visitor.first_name} {visitor.last_name}"],
-                contact_person=f"{visitor.first_name} {visitor.last_name}",
-                visitor_summary=ai_summary,
-                sentiment_classification=self._extract_sentiment_from_summary(ai_summary),
-                notes_scope_used=notes_scope,
-                report_purpose=report_purpose,
-                is_expanded=False
-            )
-            
-        except Exception as e:
-            logger.error(f"Error creating individual visitor summary: {str(e)}")
-            return self._create_fallback_individual_entry(visitor, report_purpose)
-    
-    async def generate_individual_ai_summary(
-        self,
-        visitor_context: VisitorContextData,
-        report_purpose: str
-    ) -> str:
-        """Generate AI summary for individual visitor"""
-        try:
-            # Use the followup note agent to generate a summary
-            ai_note_data = await self.followup_agent.generate_visitor_snapshot_summary(visitor_context)
-            
-            # Extract the natural summary from the AI note
-            return ai_note_data.get("natural_summary", "No summary available")
-            
-        except Exception as e:
-            logger.error(f"Error generating individual AI summary: {e}")
-            return f"Unable to generate AI summary. Basic visitor information available."
-    
-    async def _build_individual_visitor_context(
-        self,
-        visitor: PersonProfile,
-        tenant_id: str,
-        note_criteria: NoteCriteria
-    ) -> VisitorContextData:
-        """Build context for individual visitor based on note criteria"""
-        try:
-            # Get visitor profile
-            visitor_profile = {
-                "person_id": str(visitor.id),
-                "first_name": visitor.first_name,
-                "last_name": visitor.last_name,
-                "email": visitor.email,
-                "phone": visitor.phone,
-                "created_at": visitor.created_at.isoformat() if visitor.created_at else None
-            }
-            
-            # Get welcome form data
-            welcome_form_data = await self.member_service.get_visitor_welcome_form_data(str(visitor.id))
-            
-            # Get notes based on criteria
-            notes = []
-            if note_criteria == NoteCriteria.FIRST_VISIT_ONLY:
-                # Only get notes from first visit date
-                if hasattr(self.context_builder, 'get_visitor_notes_by_date'):
-                    notes = await self.context_builder.get_visitor_notes_by_date(
-                        visitor.id, 
-                        tenant_id,
-                        visitor.created_at
-                    )
-            else:
-                # Get all notes
-                if hasattr(self.context_builder, 'get_all_visitor_notes'):
-                    notes = await self.context_builder.get_all_visitor_notes(
-                        visitor.id, 
-                        tenant_id
-                    )
+            # Build family members data
+            family_members_data = []
+            for member in family_members:
+                family_members_data.append({
+                    "id": str(member.id),
+                    "first_name": member.first_name,
+                    "last_name": member.last_name,
+                    "email": getattr(member, 'email', None),
+                    "phone": getattr(member, 'phone', None),
+                    "is_family_head": str(member.id) == str(family_head_id)
+                })
             
             # Create scenario info
+            from app.api.schemas.event_schemas import FamilyScenario, DataCollectionRequirements
             scenario_info = FamilyScenario(
-                scenario_type="individual_visitor_snapshot",
-                primary_person_id=str(visitor.id),
-                fam_id=str(visitor.fam_id) if visitor.fam_id else str(visitor.id),
-                context_strategy="individual_visitor",
-                family_members_to_query=[str(visitor.id)],
-                family_head_id=str(visitor.id)
+                scenario_type="family_new" if len(family_members) == 1 else "family_existing",
+                primary_person_id=str(primary_visitor.id),
+                family_members_to_query=[str(m.id) for m in family_members],
+                family_head_id=str(family_head_id),
+                fam_id=str(primary_visitor.fam_id) if primary_visitor.fam_id else str(primary_visitor.id),
+                context_strategy="family_context",
+                data_requirements=DataCollectionRequirements()
             )
+            
+            # Convert notes to proper format
+            formatted_notes = []
+            for note in all_notes:
+                if hasattr(note, '__dict__'):
+                    formatted_notes.append(note.__dict__)
+                elif isinstance(note, dict):
+                    formatted_notes.append(note)
+                else:
+                    formatted_notes.append({"content": str(note)})
             
             return VisitorContextData(
                 visitor_profile=visitor_profile,
-                visitor_welcome_form=welcome_form_data or {},
-                family_members=[],  # Individual context
-                scenario_info=scenario_info
+                scenario_info=scenario_info,
+                visitor_welcome_form=visitor_welcome_form,  # Now properly populated
+                family_members=family_members_data,
+                first_timer_notes=formatted_notes if note_criteria == NoteCriteria.FIRST_VISIT_ONLY else [],
+                existing_followup_notes=formatted_notes if note_criteria == NoteCriteria.ALL_NOTES else [],
+                prayer_requests=[],
+                feedback_fields=[],
+                public_teams=[],
+                public_groups=[],
+                upcoming_events=[],
+                tenant_business_rules={}
             )
-            
         except Exception as e:
-            logger.error(f"Error building individual visitor context: {str(e)}")
-            # Return fallback context
-            return self._create_fallback_individual_context(visitor)
+            logger.error(f"Error building family context for {primary_visitor.id}: {str(e)}")
+            raise
+
     
+    # =============================================================================
+    # FALLBACK AND UTILITY METHODS
+    # =============================================================================
+
     def _create_fallback_individual_context(self, visitor: PersonProfile) -> VisitorContextData:
         """Create fallback context for individual visitor"""
         fallback_scenario = FamilyScenario(
@@ -583,9 +842,6 @@ class VisitorSnapshotService:
             scenario_info=fallback_scenario
         )
     
-    # =============================================================================
-    # FALLBACK AND UTILITY METHODS
-    # =============================================================================
     
     def _create_fallback_family_entry(
         self, 

@@ -24,6 +24,13 @@ class VisitorSnapshotRequest(BaseModel):
     family_criteria: FamilyCriteria = Field(default=FamilyCriteria.GROUPED_BY_FAMILY, description="0=grouped by family, 1=individual")
     report_purpose: Optional[str] = Field(default=None, max_length=500, description="Optional report purpose/label")
 
+class NoteSummary(BaseModel):
+    """Individual note summary entry"""
+    date_created: datetime
+    note_type: str  # e.g., "first time visit note", "follow up note"
+    summary: str
+    note_id: Optional[int] = None
+
 class VisitorSummaryEntry(BaseModel):
     """Individual visitor snapshot entry"""
     visitor_id: UUID
@@ -36,6 +43,7 @@ class VisitorSummaryEntry(BaseModel):
     sentiment_classification: str
     notes_scope_used: str
     report_purpose: Optional[str]
+    note_summaries: List[NoteSummary] = Field(default_factory=list, description="Individual note summaries with dates and types")
     is_expanded: bool = False
 
 class VisitorSnapshotResponse(BaseModel):

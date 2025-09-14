@@ -105,9 +105,10 @@ class PersonProfile(_Model):
 class FamilyProfile(_Model):
     fam_id: UUID
     family_head_id: UUID
-    family_size: int
+    family_size: Optional[int] = None
     family_head_first_name: Optional[str] = None
     family_head_last_name: Optional[str] = None
+    family_head_spouse_first_name: Optional[str] = None
     family_head_email: Optional[str] = None
     family_head_phone: Optional[str] = None
     family_head_dob: Optional[date] = None 

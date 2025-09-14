@@ -157,12 +157,12 @@ class VisitorEventListener:
             except asyncio.CancelledError:
                 pass
 
-            # # Delete SQS message only if note generation is successful
-            # if receipt_handle:
-            #     await self.sqs_client.delete_message(receipt_handle=receipt_handle, queue_url=self.sqs_client.default_queue_url)
-            #     logger.info(f"Successfully deleted message {message_id} from queue")
-            # else:
-            #     logger.error(f"Receipt handle is None for message {message_id}")
+            # Delete SQS message only if note generation is successful
+            if receipt_handle:
+                await self.sqs_client.delete_message(receipt_handle=receipt_handle, queue_url=self.sqs_client.default_queue_url)
+                logger.info(f"Successfully deleted message {message_id} from queue")
+            else:
+                logger.error(f"Receipt handle is None for message {message_id}")
 
             logger.info(
                 f"Successfully processed message {message_id} for person {event_data.person_id} in tenant {schema_name}"

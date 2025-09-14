@@ -188,12 +188,14 @@ class MemberRepository(IMemberRepository):
     async def get_family_by_id(self, fam_id: UUID) -> Optional[FamilyProfile]:
             query = """
             SELECT
-                f.id as fam_id, f.head_id as family_head_id, f.family_size,
-                f.first_name as family_head_first_name, f.last_name as family_head_last_name,
-                f.email as family_head_email, f.phone as family_head_phone,
-                f.fam_address, f.fam_city, f.fam_state, f.fam_country, f.fam_zip,
+                f.id as fam_id, f.family_head as family_head_id, f.family_size,
+                f.first_name as family_head_first_name, f.last_name as family_head_last_name, f.spouse_first_name as family_head_spouse_first_name,
+                p.email as family_head_email, p.phone as family_head_phone,
+                p.address as family_head_address, p.city as family_head_city, p.state as family_head_state, p.country as family_head_country, p.zip as family_head_zip,
+                f.fam_address, f.fam_city, f.fam_state, f.fam_country, f.fam_zip, f.joined_via,
                 f.created_at, f.updated_at
             FROM fam f
+            LEFT JOIN person p ON f.family_head = p.id
             WHERE f.id = $1
             """
             async with self.get_connection() as conn:

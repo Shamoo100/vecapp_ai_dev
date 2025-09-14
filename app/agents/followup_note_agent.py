@@ -4,6 +4,7 @@ import re
 import json
 import asyncio
 import logging
+import time
 from dotenv import load_dotenv
 from .base_agent import BaseAgent
 from app.api.schemas.event_schemas import VisitorContextData
@@ -987,3 +988,274 @@ class FollowupNoteAgent(BaseAgent):
             "family_context": "Individual visit",
             "confidence_score": 0.5
         }
+
+    async def generate_individual_note_summaries(self, notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Generate summaries for individual notes with enhanced error handling."""
+        note_summaries = []
+        start_time = time.time()
+        
+        logger.info(f"Generating summaries for {len(notes)} notes")
+        processed_count = 0
+        
+        for note in notes:
+            try:
+                # Extract note data
+                note_id = note.get("id", "unknown")
+                title = note.get("title", "")
+                notes_body = note.get("notes_body", "")
+                created_at = note.get("created_at", "")
+                
+                # Skip empty notes
+                if not notes_body or notes_body.isspace():
+                    logger.debug(f"Skipping empty note with ID {note_id}")
+                    continue
+                
+                processed_count += 1  # Count notes that aren't empty
+                
+                # Determine note type
+                note_type = self._determine_note_type(title)
+                
+                # Generate summary with retry mechanism
+                max_retries = 2
+                retry_count = 0
+                summary = None
+                
+                while retry_count <= max_retries and not summary:
+                    try:
+                        process_start = time.time()
+                        summary = await self._generate_single_note_summary(notes_body, title, note_type)
+                        process_time = time.time() - process_start
+                        
+                        # Check if summary is empty or indicates no availability
+                        if not summary or summary == "No summary available.":
+                            logger.warning(f"Empty summary returned for note {note_id}, attempt {retry_count+1}/{max_retries+1}")
+                            retry_count += 1
+                            if retry_count <= max_retries:
+                                logger.info(f"Retrying note {note_id} after empty summary")
+                                await asyncio.sleep(1)  # Brief delay before retry
+                            else:
+                                # Create fallback summary after all retries fail
+                                logger.warning(f"All retries failed for note {note_id}, using fallback summary")
+                                summary = self._create_fallback_note_summary(notes_body, title, note_type)
+                        else:
+                            logger.debug(f"Successfully generated summary for note {note_id} in {process_time:.2f}s")
+                    except Exception as e:
+                        logger.error(f"Error generating summary for note {note_id}: {e}")
+                        retry_count += 1
+                        if retry_count <= max_retries:
+                            logger.info(f"Retrying note {note_id} after error")
+                            await asyncio.sleep(1)  # Brief delay before retry
+                        else:
+                            # Create fallback summary after all retries fail
+                            logger.warning(f"All retries failed for note {note_id}, using fallback summary")
+                            summary = self._create_fallback_note_summary(notes_body, title, note_type)
+                
+                # Ensure we have a summary before adding to results
+                if not summary:
+                    logger.warning(f"Still no summary after all retries for note {note_id}, creating emergency fallback")
+                    summary = f"Note from {created_at}: {title if title else 'Untitled note'}"
+                
+                # Add summary to results
+                note_summaries.append({
+                    "note_id": note_id,
+                    "title": title,
+                    "summary": summary,
+                    "date_created": created_at,  # Changed from created_at to date_created
+                    "note_type": note_type
+                })
+                
+            except Exception as e:
+                logger.error(f"Unexpected error processing note: {e}")
+                # Still add a fallback summary even for unexpected errors
+                note_summaries.append({
+                    "note_id": note.get("id", "unknown"),
+                    "title": note.get("title", ""),
+                    "summary": self._create_fallback_note_summary(note.get("notes_body", ""), note.get("title", ""), "note"),
+                    "date_created": note.get("created_at", ""),  # Changed from created_at to date_created
+                    "note_type": "note"
+                })
+        
+        total_time = time.time() - start_time
+        logger.info(f"[PERFORMANCE] Note summary generation completed in {total_time:.2f}s - Processed {processed_count} notes, generated {len(note_summaries)} summaries")
+        
+        return note_summaries
+        
+    def _create_fallback_note_summary(self, notes_body: str, title: str, note_type: str) -> str:
+        """Create a fallback summary when LLM generation fails."""
+        # Extract basic information from the note
+        words = notes_body.split()
+        word_count = len(words)
+        
+        # Create a simple excerpt (first 10-15 words)
+        excerpt = " ".join(words[:min(15, word_count)])
+        if word_count > 15:
+            excerpt += "..."
+            
+        # Format a basic summary with available information
+        summary = f"This {note_type} contains {word_count} words. "
+        
+        if title:
+            summary += f"Title: '{title}'. "
+            
+        if excerpt:
+            summary += f"Excerpt: {excerpt}"
+            
+        return summary
+
+    # async def generate_individual_note_summaries(self, notes: List[Any]) -> List[Dict[str, Any]]:
+    #     """
+    #     Generate AI summaries for individual notes with enhanced debugging.
+    #     """
+    #     start_time = time.time()
+    #     note_summaries = []
+        
+    #     logger.info(f"[DEBUG] Starting note summary generation for {len(notes)} notes")
+        
+    #     for i, note in enumerate(notes):
+    #         try:
+    #             # Handle both PersonNote objects and dictionaries
+    #             if hasattr(note, 'model_dump'):
+    #                 note_data = note.model_dump()
+    #             else:
+    #                 note_data = note if isinstance(note, dict) else {}
+                
+    #             # Extract note information
+    #             note_id = note_data.get('id')
+    #             title = note_data.get('title', '')
+    #             notes_body = note_data.get('notes_body', '')
+    #             created_at = note_data.get('created_at')
+                
+    #             logger.debug(f"[DEBUG] Processing note {i+1}/{len(notes)}: ID={note_id}, Title='{title[:30]}', Body length={len(notes_body)}")
+                
+    #             # Skip empty notes
+    #             if not notes_body or not notes_body.strip():
+    #                 logger.debug(f"[DEBUG] Skipping empty note {note_id}")
+    #                 continue
+                
+    #             # Determine note type based on title
+    #             note_type = self._determine_note_type(title)
+    #             logger.debug(f"[DEBUG] Determined note type: {note_type}")
+                
+    #             # Generate AI summary for the note
+    #             summary_start = time.time()
+    #             summary = await self._generate_single_note_summary(notes_body, title, note_type)
+    #             summary_time = time.time() - summary_start
+                
+    #             logger.debug(f"[DEBUG] Generated summary in {summary_time:.2f}s: '{summary[:50]}...'")
+                
+    #             note_summary = {
+    #                 'date_created': created_at,
+    #                 'note_type': note_type,
+    #                 'summary': summary,
+    #                 'note_id': note_id
+    #             }
+                
+    #             note_summaries.append(note_summary)
+                
+    #         except Exception as e:
+    #             logger.error(f"[DEBUG] Error processing note {note_data.get('id', 'unknown')}: {e}")
+    #             # Add fallback summary for failed notes
+    #             note_summaries.append({
+    #                 'date_created': note_data.get('created_at'),
+    #                 'note_type': 'note',
+    #                 'summary': 'Summary unavailable due to processing error.',
+    #                 'note_id': note_data.get('id')
+    #             })
+        
+    #     total_time = time.time() - start_time
+    #     logger.info(f"[PERFORMANCE] Note summary generation completed in {total_time:.2f}s - Processed {len(notes)} notes, generated {len(note_summaries)} summaries")
+        
+    #     return note_summaries
+    
+    def _determine_note_type(self, title: str) -> str:
+        """
+        Determine the type of note based on its title.
+        
+        Args:
+            title: The note title
+            
+        Returns:
+            String describing the note type
+        """
+        if not title:
+            return "note"
+        
+        title_lower = title.lower()
+        
+        if any(keyword in title_lower for keyword in ['first-visit', 'first-timer', 'welcome', 'visitor summary']):
+            return "first time visit note"
+        elif any(keyword in title_lower for keyword in ['follow', 'followup', 'follow-up']):
+            return "follow up note"
+        elif any(keyword in title_lower for keyword in ['prayer', 'pray', 'prayer request']):
+            return "prayer request note"
+        elif any(keyword in title_lower for keyword in ['feedback', 'comment']):
+            return "feedback note"
+        else:
+            return "note"
+            
+    def _preprocess_note_content(self, content: str) -> str:
+        """
+        Preprocess note content to reduce potential safety filter triggers.
+        """
+        # Remove any potentially problematic content patterns
+        # This is a simple implementation - expand based on observed patterns
+        
+        # Convert to lowercase for easier pattern matching
+        content_lower = content.lower()
+        
+        # Log if potentially sensitive content is detected
+        sensitive_keywords = ['suicide', 'kill', 'harm', 'weapon', 'threat', 'attack']
+        found_keywords = [kw for kw in sensitive_keywords if kw in content_lower]
+        
+        if found_keywords:
+            logger.warning(f"Note contains potentially sensitive keywords: {found_keywords}")
+            # Don't modify content, but flag it for monitoring
+            
+        return content
+    
+    async def _generate_single_note_summary(self, notes_body: str, title: str, note_type: str) -> str:
+        """
+        Generate an AI summary for a single note with enhanced debugging.
+        """
+        try:
+            logger.debug(f"[DEBUG] Generating summary for {note_type} note: '{title[:30]}' (body: {len(notes_body)} chars)")
+            
+            # Create a concise prompt for note summarization
+            prompt = f"""
+            Please provide a concise summary of this {note_type}. Focus on key information, interests, needs, and any action items mentioned.
+            
+            Note Title: {title}
+            Note Content: {notes_body}
+            
+            Provide a brief, informative summary in 1-2 sentences that captures the essential information.
+            """
+            
+            # Log LLM provider status before call
+            provider_status = self.get_llm_provider_status()
+            logger.debug(f"[DEBUG] LLM provider status before call: {provider_status}")
+            
+            # Generate summary using LLM
+            llm_start = time.time()
+            response = await self.generate_llm_content(
+                prompt=prompt,
+                temperature=0.3,
+                max_tokens=150
+            )
+            llm_time = time.time() - llm_start
+            
+            logger.debug(f"[DEBUG] LLM call completed in {llm_time:.2f}s, response length: {len(response) if response else 0}")
+            
+            # Extract and clean the summary
+            summary = response.strip() if response else "No summary available."
+            
+            # Ensure summary is not too long
+            if len(summary) > 300:
+                summary = summary[:297] + "..."
+            
+            logger.debug(f"[DEBUG] Final summary: '{summary[:100]}...'")
+            return summary
+            
+        except Exception as e:
+            logger.error(f"[DEBUG] Error generating note summary: {e}")
+            # Return a basic fallback summary
+            return f"Note contains information about the visitor's {note_type.replace('note', '').strip()}."

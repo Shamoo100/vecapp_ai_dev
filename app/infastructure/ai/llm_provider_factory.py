@@ -97,15 +97,24 @@ class GeminiClient(BaseLLMClient):
                 # Check for MAX_TOKENS truncation
                 if hasattr(response, 'candidates') and response.candidates:
                     candidate = response.candidates[0]
-                    if hasattr(candidate, 'finish_reason') and candidate.finish_reason == 'MAX_TOKENS':
+                    finish_reason = getattr(candidate, 'finish_reason', 'UNKNOWN')
+                    
+                    if finish_reason == 'MAX_TOKENS':
                         logger.error(f"Gemini response truncated due to MAX_TOKENS. Consider increasing max_output_tokens.")
                         raise RuntimeError("Response truncated due to token limit")
-                    if hasattr(candidate, 'finish_reason'):
-                        logger.warning(f"Gemini finish reason: {candidate.finish_reason}")
+                    elif finish_reason == 'SAFETY':
+                        logger.error(f"Gemini response blocked by safety filters")
+                        safety_ratings = getattr(candidate, 'safety_ratings', [])
+                        logger.error(f"Safety ratings: {safety_ratings}")
+                        raise RuntimeError("Response blocked by safety filters")
+                    else:
+                        logger.warning(f"Gemini finish reason: {finish_reason}")
+                        
                     if hasattr(candidate, 'safety_ratings'):
                         logger.warning(f"Gemini safety ratings: {candidate.safety_ratings}")
+                        
                 logger.error(f"Gemini response missing text attribute. Response: {response}")
-                return ""
+                raise RuntimeError(f"Empty response from Gemini with finish reason: {getattr(candidate, 'finish_reason', 'UNKNOWN')}")
                 
             result_text = response.text.strip() if response.text else ""
             logger.debug(f"Gemini response length: {len(result_text)} characters")
@@ -115,10 +124,18 @@ class GeminiClient(BaseLLMClient):
                 # Check for safety filters or other issues
                 if hasattr(response, 'candidates') and response.candidates:
                     candidate = response.candidates[0]
-                    if hasattr(candidate, 'finish_reason'):
-                        logger.warning(f"Gemini finish reason: {candidate.finish_reason}")
+                    finish_reason = getattr(candidate, 'finish_reason', 'UNKNOWN')
+                    logger.warning(f"Gemini finish reason: {finish_reason}")
+                    
+                    if finish_reason == 'SAFETY':
+                        safety_ratings = getattr(candidate, 'safety_ratings', [])
+                        logger.error(f"Safety ratings: {safety_ratings}")
+                        raise RuntimeError("Response blocked by safety filters")
+                    
                     if hasattr(candidate, 'safety_ratings'):
                         logger.warning(f"Gemini safety ratings: {candidate.safety_ratings}")
+                
+                raise RuntimeError("Empty response from Gemini")
         
             return result_text
             

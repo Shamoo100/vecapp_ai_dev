@@ -87,6 +87,16 @@ class MemberService:
             logger.error(f"Error getting family members for {fam_id}: {str(e)}")
             raise
 
+    
+    async def get_family_by_id(self, fam_id: UUID) -> Optional[FamilyMember]:
+        try:
+            if isinstance(fam_id, str):
+                fam_id = UUID(fam_id)
+            return await self._repository.get_family_by_id(fam_id)
+        except Exception as e:
+            logger.error(f"Error getting family by id for {fam_id}: {str(e)}")
+            raise
+
 
     async def get_family_members_profiles(self, member_ids: List[str]) -> List[PersonProfile]:
 
@@ -325,7 +335,7 @@ class MemberService:
 
     async def get_first_timer_notes(self, person_id: str) -> List[Dict[str, Any]]:
         """
-        Get first-timer specific notes using title-based filtering.
+        Get first-timer specific notes using title-based filtering with fallback.
         
         Args:
             person_id: The person's unique identifier (string for SQS compatibility)
@@ -338,13 +348,20 @@ class MemberService:
             if isinstance(person_id, str):
                 person_uuid = UUID(person_id)
                 
-            # Get notes with first-timer related titles
+            # First try title-based filtering
             first_timer_patterns = [
                 "First Timer",
                 "First-Timer", 
                 "First Visit",
                 "New Visitor",
-                "Welcome Note"
+                "Welcome Note",
+                "Visit Note",
+                "Prayer Request",
+                "Prayer",
+                "Feedback",
+                "Visitor Summary",
+                "Initial",
+                "Welcome"
             ]
             
             first_timer_notes = await self._repository.get_notes_by_title_pattern(
@@ -353,17 +370,44 @@ class MemberService:
                 limit=10
             )
             
+            # If no title-based notes found, fallback to recent notes
+            if not first_timer_notes:
+                logger.warning(f"No title-based first timer notes found for {person_id}, falling back to recent notes")
+                all_notes = await self._repository.get_person_notes(person_uuid, limit=5)
+                
+                # Filter for recent notes (within last 30 days) as potential first-timer notes
+                from datetime import datetime, timedelta, timezone
+                cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
+                
+                first_timer_notes = [
+                    note for note in all_notes 
+                    if note.created_at and note.created_at >= cutoff_date
+                ]
+                
+                logger.info(f"Found {len(first_timer_notes)} recent notes as fallback for {person_id}")
+            
             # Enhance with first-timer specific metadata
             enhanced_notes = []
             for note in first_timer_notes:
+                # Convert to dict if it's not already
+                if hasattr(note, '__dict__'):
+                    note_dict = note.__dict__
+                elif hasattr(note, 'model_dump'):
+                    note_dict = note.model_dump()
+                elif isinstance(note, dict):
+                    note_dict = note
+                else:
+                    note_dict = {"notes_body": str(note)}
+                    
                 enhanced_note = {
-                     **(note if isinstance(note, dict) else {}),
+                    **note_dict,
                     'note_type': 'first_timer',
-                    'relevance_score': self._calculate_first_timer_relevance(note.notes_body or ""),
-                    'visit_context': self._extract_visit_context(note.notes_body or " ")
+                    'relevance_score': self._calculate_first_timer_relevance(note_dict.get('notes_body', "")),
+                    'visit_context': self._extract_visit_context(note_dict.get('notes_body', ""))
                 }
                 enhanced_notes.append(enhanced_note)
             
+            logger.debug(f"Returning {len(enhanced_notes)} enhanced first timer notes for {person_id}")
             return enhanced_notes
             
         except Exception as e:
